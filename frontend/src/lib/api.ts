@@ -91,28 +91,109 @@ export interface SettingsInfo {
   whisper_model: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      // ignore - no JSON body
-    }
-    throw new Error(`${res.status} ${detail}`);
+// In-memory access token, set by AuthContext on login/register/refresh.
+// The refresh token itself lives only in the httpOnly cookie and is never
+// touched by JS.
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+// Set by AuthContext: calls POST /api/auth/refresh and returns the new
+// access token (or null on failure). Used by `request` to retry once on 401.
+let refreshHandler: (() => Promise<string | null>) | null = null;
+
+export function setRefreshHandler(handler: (() => Promise<string | null>) | null): void {
+  refreshHandler = handler;
+}
+
+function authHeaders(init?: RequestInit): HeadersInit {
+  const headers = new Headers(init?.headers);
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  return headers;
+}
+
+async function throwForResponse(res: Response): Promise<never> {
+  let detail = res.statusText;
+  try {
+    const body = await res.json();
+    detail = body.detail ?? detail;
+  } catch {
+    // ignore - no JSON body
   }
+  throw new Error(`${res.status} ${detail}`);
+}
+
+async function request<T>(path: string, init?: RequestInit, skipRetry = false): Promise<T> {
+  const res = await fetch(path, { ...init, headers: authHeaders(init), credentials: "include" });
+  if (res.status === 401 && refreshHandler && !skipRetry) {
+    const newToken = await refreshHandler();
+    if (newToken) {
+      const retryHeaders = new Headers(init?.headers);
+      retryHeaders.set("Authorization", `Bearer ${newToken}`);
+      const retryRes = await fetch(path, { ...init, headers: retryHeaders, credentials: "include" });
+      if (!retryRes.ok) return throwForResponse(retryRes);
+      return retryRes.json() as Promise<T>;
+    }
+  }
+  if (!res.ok) return throwForResponse(res);
   return res.json() as Promise<T>;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
 export const api = {
+  register(email: string, password: string, display_name: string) {
+    return request<AuthResponse>(`/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, display_name }),
+    });
+  },
+
+  login(email: string, password: string) {
+    return request<AuthResponse>(`/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  refresh() {
+    return request<AuthResponse>(`/api/auth/refresh`, { method: "POST" }, true);
+  },
+
+  logout() {
+    return request<{ ok: boolean }>(`/api/auth/logout`, { method: "POST" });
+  },
+
+  me() {
+    return request<AuthUser>(`/api/auth/me`);
+  },
+
   uploadMedia(file: File, onProgress?: (pct: number) => void): Promise<MediaItem> {
     return new Promise((resolve, reject) => {
       const form = new FormData();
       form.append("file", file);
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/media/upload");
+      xhr.withCredentials = true;
+      if (accessToken) xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
       };

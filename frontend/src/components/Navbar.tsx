@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   Upload,
   LayoutGrid,
@@ -9,8 +9,10 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   Camera,
+  LogOut,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { useAuth } from "../lib/AuthContext";
 import "./Navbar.css";
 
 const LINKS = [
@@ -25,6 +27,14 @@ const LINKS = [
 ];
 
 export function Navbar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const onLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <nav className="navbar glass-card">
       <div className="navbar-brand">
@@ -51,6 +61,17 @@ export function Navbar() {
       </div>
 
       <div className="navbar-footer">
+        {user && (
+          <div className="navbar-user">
+            <div className="navbar-user-avatar">{user.display_name.charAt(0).toUpperCase()}</div>
+            <div className="navbar-user-name" title={user.email}>
+              {user.display_name}
+            </div>
+            <button className="navbar-logout" onClick={onLogout} title="Log out">
+              <LogOut size={15} />
+            </button>
+          </div>
+        )}
         <ThemeToggle />
       </div>
     </nav>

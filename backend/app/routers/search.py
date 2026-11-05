@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from app.auth import CurrentUser, get_current_user
 from app.db import db_cursor
 from app.services.search import search as fts_search
 
@@ -22,12 +23,17 @@ class SearchResultOut(BaseModel):
 
 
 @router.get("", response_model=List[SearchResultOut])
-def search_media(q: str = Query(..., min_length=1)) -> List[SearchResultOut]:
-    hits = fts_search(q)
+def search_media(
+    q: str = Query(..., min_length=1), current_user: CurrentUser = Depends(get_current_user)
+) -> List[SearchResultOut]:
+    hits = fts_search(q, user_id=current_user.id)
     out: List[SearchResultOut] = []
     for hit in hits:
         with db_cursor() as cur:
-            cur.execute("SELECT filename, media_type, thumb_path FROM media WHERE id = ?", (hit.media_id,))
+            cur.execute(
+                "SELECT filename, media_type, thumb_path FROM media WHERE id = ? AND user_id = ?",
+                (hit.media_id, current_user.id),
+            )
             row = cur.fetchone()
         if not row:
             continue

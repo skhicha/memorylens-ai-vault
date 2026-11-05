@@ -1,20 +1,41 @@
 from __future__ import annotations
 
-import shutil
 import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.auth import CurrentUser, get_current_user
 from app.db import UPLOADS_DIR, db_cursor
 from app.services.pipeline import PHOTO_EXTS, VIDEO_EXTS, classify_media_type, process_media_async
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 
 ALLOWED_EXTS = PHOTO_EXTS | VIDEO_EXTS
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB
+
+# Magic-byte signatures for the file types we accept. Checked against the
+# actual bytes on disk, not the client-supplied filename/extension/mimetype,
+# so a renamed/relabelled file can't slip through.
+_MAGIC_SIGNATURES: list[tuple[bytes, int]] = [
+    (b"\xff\xd8\xff", 0),  # JPEG
+    (b"\x89PNG\r\n\x1a\n", 0),  # PNG
+    (b"RIFF", 0),  # WEBP (RIFF....WEBP) / AVI (RIFF....AVI )
+    (b"BM", 0),  # BMP
+    (b"ftyp", 4),  # MP4/MOV/M4V/HEIC (ISO base media file format)
+    (b"\x00\x00\x00\x18ftyp", 0),
+    (b"\x1aE\xdf\xa3", 0),  # MKV/WEBM (EBML)
+]
+
+
+def _looks_like_known_media(header: bytes) -> bool:
+    for sig, offset in _MAGIC_SIGNATURES:
+        if len(header) >= offset + len(sig) and header[offset : offset + len(sig)] == sig:
+            return True
+    return False
 
 
 class FaceOut(BaseModel):
@@ -88,26 +109,52 @@ def _row_to_media_out(row, tags: List[str]) -> MediaOut:
 
 
 @router.post("/upload", response_model=MediaOut)
-async def upload_media(file: UploadFile = File(...)) -> MediaOut:
+async def upload_media(
+    file: UploadFile = File(...), current_user: CurrentUser = Depends(get_current_user)
+) -> MediaOut:
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTS:
         raise HTTPException(400, f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_EXTS)}")
 
+    # Read into memory in bounded chunks so we can reject oversized/invalid
+    # uploads cleanly (4xx) before ever writing a byte to disk.
+    header = b""
+    total = 0
+    chunks: List[bytes] = []
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"File too large. Max allowed size is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+        if len(header) < 64:
+            header += chunk[: 64 - len(header)]
+        chunks.append(chunk)
+
+    if total == 0:
+        raise HTTPException(400, "Uploaded file is empty")
+    if not _looks_like_known_media(header):
+        raise HTTPException(400, "File content does not match a supported image/video format")
+
+    # Always generate the on-disk filename ourselves -- the client-supplied
+    # filename is only ever stored as metadata, never used as a path.
     media_id = uuid.uuid4().hex[:16]
     media_type = classify_media_type(file.filename or "")
     dest_path = UPLOADS_DIR / f"{media_id}{ext}"
 
     with dest_path.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+        for chunk in chunks:
+            out.write(chunk)
     size_bytes = dest_path.stat().st_size
 
     with db_cursor() as cur:
         cur.execute(
             """
-            INSERT INTO media (id, filename, media_type, status, file_path, mime_type, size_bytes)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?)
+            INSERT INTO media (id, user_id, filename, media_type, status, file_path, mime_type, size_bytes)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
             """,
-            (media_id, file.filename, media_type, str(dest_path), file.content_type, size_bytes),
+            (media_id, current_user.id, file.filename, media_type, str(dest_path), file.content_type, size_bytes),
         )
         cur.execute("SELECT * FROM media WHERE id = ?", (media_id,))
         row = cur.fetchone()
@@ -122,9 +169,10 @@ def list_media(
     tag: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> List[MediaOut]:
-    clauses = []
-    params: list = []
+    clauses = ["user_id = ?"]
+    params: list = [current_user.id]
     if media_type:
         clauses.append("media_type = ?")
         params.append(media_type)
@@ -138,7 +186,7 @@ def list_media(
         clauses.append("id IN (SELECT media_id FROM tags WHERE tag = ?)")
         params.append(tag)
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    where = f"WHERE {' AND '.join(clauses)}"
     with db_cursor() as cur:
         cur.execute(f"SELECT * FROM media {where} ORDER BY created_at DESC", params)
         rows = cur.fetchall()
@@ -150,11 +198,15 @@ def list_media(
     return out
 
 
+def _get_owned_media_row(media_id: str, user_id: str, cur):
+    cur.execute("SELECT * FROM media WHERE id = ? AND user_id = ?", (media_id, user_id))
+    return cur.fetchone()
+
+
 @router.get("/{media_id}", response_model=MediaDetailOut)
-def get_media(media_id: str) -> MediaDetailOut:
+def get_media(media_id: str, current_user: CurrentUser = Depends(get_current_user)) -> MediaDetailOut:
     with db_cursor() as cur:
-        cur.execute("SELECT * FROM media WHERE id = ?", (media_id,))
-        row = cur.fetchone()
+        row = _get_owned_media_row(media_id, current_user.id, cur)
         if not row:
             raise HTTPException(404, "Media not found")
         cur.execute("SELECT tag FROM tags WHERE media_id = ?", (media_id,))
@@ -180,10 +232,9 @@ def get_media(media_id: str) -> MediaDetailOut:
 
 
 @router.delete("/{media_id}")
-def delete_media(media_id: str) -> dict:
+def delete_media(media_id: str, current_user: CurrentUser = Depends(get_current_user)) -> dict:
     with db_cursor() as cur:
-        cur.execute("SELECT file_path, thumb_path FROM media WHERE id = ?", (media_id,))
-        row = cur.fetchone()
+        row = _get_owned_media_row(media_id, current_user.id, cur)
         if not row:
             raise HTTPException(404, "Media not found")
         cur.execute("DELETE FROM search_index WHERE media_id = ?", (media_id,))
@@ -195,28 +246,38 @@ def delete_media(media_id: str) -> dict:
 
 
 @router.get("/{media_id}/file")
-def get_media_file(media_id: str):
+def get_media_file(media_id: str, current_user: CurrentUser = Depends(get_current_user)):
     with db_cursor() as cur:
-        cur.execute("SELECT file_path, mime_type FROM media WHERE id = ?", (media_id,))
-        row = cur.fetchone()
+        row = _get_owned_media_row(media_id, current_user.id, cur)
     if not row or not Path(row["file_path"]).exists():
         raise HTTPException(404, "File not found")
     return FileResponse(row["file_path"], media_type=row["mime_type"] or None)
 
 
 @router.get("/{media_id}/thumbnail")
-def get_media_thumbnail(media_id: str):
+def get_media_thumbnail(media_id: str, current_user: CurrentUser = Depends(get_current_user)):
     with db_cursor() as cur:
-        cur.execute("SELECT thumb_path FROM media WHERE id = ?", (media_id,))
-        row = cur.fetchone()
+        row = _get_owned_media_row(media_id, current_user.id, cur)
     if not row or not row["thumb_path"] or not Path(row["thumb_path"]).exists():
         raise HTTPException(404, "Thumbnail not found")
     return FileResponse(row["thumb_path"], media_type="image/jpeg")
 
 
 @router.get("/keyframe/{filename}")
-def get_keyframe(filename: str):
+def get_keyframe(filename: str, current_user: CurrentUser = Depends(get_current_user)):
     from app.db import KEYFRAMES_DIR
+
+    # Keyframes are only ever requested via a media detail response we've
+    # already scoped to this user, but double-check ownership via the
+    # faces table so the keyframe path itself can't be guessed cross-user.
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT f.media_id FROM faces f JOIN media m ON m.id = f.media_id "
+            "WHERE f.keyframe_path LIKE ? AND m.user_id = ? LIMIT 1",
+            (f"%{filename}", current_user.id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Keyframe not found")
 
     path = KEYFRAMES_DIR / filename
     if not path.exists():

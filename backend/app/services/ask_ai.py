@@ -38,8 +38,8 @@ class AskResult:
     provider: str
 
 
-def _gather_citations(question: str, limit: int = 8) -> List[Citation]:
-    hits = fts_search(question, limit=limit)
+def _gather_citations(question: str, user_id: str, limit: int = 8) -> List[Citation]:
+    hits = fts_search(question, limit=limit, user_id=user_id)
     citations: List[Citation] = []
     seen = set()
     for hit in hits:
@@ -48,7 +48,10 @@ def _gather_citations(question: str, limit: int = 8) -> List[Citation]:
             continue
         seen.add(key)
         with db_cursor() as cur:
-            cur.execute("SELECT filename, media_type FROM media WHERE id = ?", (hit.media_id,))
+            cur.execute(
+                "SELECT filename, media_type FROM media WHERE id = ? AND user_id = ?",
+                (hit.media_id, user_id),
+            )
             row = cur.fetchone()
         if not row:
             continue
@@ -122,8 +125,8 @@ def _anthropic_answer(question: str, citations: List[Citation]) -> str:
     return "\n".join(text_parts).strip() or _mock_answer(question, citations)
 
 
-def answer_question(question: str) -> AskResult:
-    citations = _gather_citations(question)
+def answer_question(question: str, user_id: str) -> AskResult:
+    citations = _gather_citations(question, user_id)
     provider = os.environ.get("LLM_PROVIDER", "mock").lower()
 
     if provider == "anthropic":

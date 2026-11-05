@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.auth import CurrentUser, get_current_user
 from app.services.ask_ai import answer_question
 
 router = APIRouter(prefix="/api/ask", tags=["ask"])
@@ -30,8 +31,8 @@ class AskResponse(BaseModel):
 
 
 @router.post("", response_model=AskResponse)
-def ask(req: AskRequest) -> AskResponse:
-    result = answer_question(req.question)
+def ask(req: AskRequest, current_user: CurrentUser = Depends(get_current_user)) -> AskResponse:
+    result = answer_question(req.question, current_user.id)
     return AskResponse(
         answer=result.answer,
         provider=result.provider,

@@ -73,9 +73,30 @@ real Claude call) → answer + citation chips returned to the chat UI.
 | Recharts | recharts dashboards | Identical library — same charts-from-data skill, smaller dataset |
 | Leaflet + react-leaflet | Map/geolocation UI | Lightweight, no API key needed (OpenStreetMap tiles), unlike some commercial map SDKs |
 | Threaded background pipeline | Background job processing | A plain daemon thread per upload stands in for a task queue — appropriate at personal-vault scale, keeps Docker/Redis out of the picture |
+| JWT (python-jose) access + httpOnly refresh cookie | Session/auth layer | Same token-based auth pattern used in production APIs; short-lived access token limits exposure, httpOnly refresh cookie keeps the long-lived credential out of reach of JS/XSS |
+| passlib + bcrypt password hashing | Credential storage | Industry-standard adaptive hashing (not plaintext, not a fast general-purpose hash like MD5/SHA) — the same primitive any real auth system uses |
+| slowapi rate limiting | API abuse protection | 5 req/min/IP on login & register blunts brute-force and credential-stuffing attempts, mirroring the rate limits a production auth endpoint needs |
+| Per-request `user_id` SQL filtering | Multi-tenant data isolation | Every query in `media.py`/`search.py`/`ask.py`/`dashboard.py` is scoped to the signed-in user at the database level, so one account structurally cannot read another's data |
+| CORS allowlist + security response headers | Network/browser hardening | `CORS_ORIGINS` env var keeps the API from accepting arbitrary origins, and `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy` headers close off common MIME-sniffing, clickjacking, and referrer-leak vectors |
 
 ## Screen-by-screen walkthrough script
 
+0. **Register → Login → Upload → data isolation** — "First, I create an
+   account on `/register` — email, a display name, and a password that has
+   to be at least 8 characters with a letter and a number; that gets
+   bcrypt-hashed, never stored in plaintext. Logging in returns a
+   short-lived JWT access token and sets an httpOnly refresh cookie — the
+   refresh token itself never touches JavaScript, which is a real defense
+   against XSS token theft. Every API call after that carries the access
+   token as a Bearer header, and if it expires mid-session the frontend
+   silently calls `/api/auth/refresh` and retries — the user never sees a
+   broken request. Now watch what happens if I log in as a *second*
+   account and upload a photo there: back on the first account's Library,
+   that second account's photo is nowhere to be found — every single
+   query on the backend filters by `user_id`, so this isn't a UI-level
+   hide, it's enforced at the SQL level. I also rate-limit login/register
+   to 5 requests a minute per IP, so a script trying to brute-force a
+   password gets a 429 after a few attempts."
 1. **Upload** — "I drag in a couple of photos and a short video. Each one
    shows a progress bar, then the status flips from pending to processing
    to ready as the backend works through it in the background — I'm not
@@ -146,8 +167,12 @@ was a deliberate scope decision, not a limitation of the concepts.
 **Q: What would you change for a multi-user, production version?**
 A: Swap SQLite for Postgres with a proper connection pool, move the
 background pipeline to a real task queue (Celery/RQ) instead of per-upload
-threads, add auth and per-user storage isolation, and move face/object
-detection to a trained model instead of Haar cascades.
+threads, and move face/object detection to a trained model instead of Haar
+cascades. Auth and per-user data isolation are already in place (JWT
+access + httpOnly refresh cookie, bcrypt password hashing, rate-limited
+login/register, every query scoped by `user_id`) — for a real production
+deployment I'd add refresh-token rotation/blacklisting and a password-reset
+flow on top of that foundation.
 
 ## Honest scope note
 

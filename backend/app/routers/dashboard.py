@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.auth import CurrentUser, get_current_user
 from app.db import db_cursor
 from app.services.pipeline import reindex_all
 
@@ -47,36 +48,44 @@ class DashboardSummary(BaseModel):
 
 
 @router.get("/summary", response_model=DashboardSummary)
-def dashboard_summary() -> DashboardSummary:
+def dashboard_summary(current_user: CurrentUser = Depends(get_current_user)) -> DashboardSummary:
+    uid = current_user.id
     with db_cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS c FROM media")
+        cur.execute("SELECT COUNT(*) AS c FROM media WHERE user_id = ?", (uid,))
         total_media = cur.fetchone()["c"]
 
-        cur.execute("SELECT media_type, COUNT(*) AS c FROM media GROUP BY media_type")
+        cur.execute("SELECT media_type, COUNT(*) AS c FROM media WHERE user_id = ? GROUP BY media_type", (uid,))
         type_rows = cur.fetchall()
         type_split = [TypeSplit(media_type=r["media_type"], count=r["c"]) for r in type_rows]
         total_photos = next((r["c"] for r in type_rows if r["media_type"] == "photo"), 0)
         total_videos = next((r["c"] for r in type_rows if r["media_type"] == "video"), 0)
 
-        cur.execute("SELECT COALESCE(SUM(face_count), 0) AS c FROM media")
+        cur.execute("SELECT COALESCE(SUM(face_count), 0) AS c FROM media WHERE user_id = ?", (uid,))
         total_faces = cur.fetchone()["c"]
 
-        cur.execute("SELECT COUNT(*) AS c FROM media WHERE gps_lat IS NOT NULL AND gps_lon IS NOT NULL")
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM media WHERE user_id = ? AND gps_lat IS NOT NULL AND gps_lon IS NOT NULL",
+            (uid,),
+        )
         total_with_gps = cur.fetchone()["c"]
 
         cur.execute(
-            "SELECT date(created_at) AS d, COUNT(*) AS c FROM media GROUP BY d ORDER BY d"
+            "SELECT date(created_at) AS d, COUNT(*) AS c FROM media WHERE user_id = ? GROUP BY d ORDER BY d",
+            (uid,),
         )
         uploads_by_day = [UploadsByDay(date=r["d"], count=r["c"]) for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT tag, COUNT(*) AS c FROM tags GROUP BY tag ORDER BY c DESC LIMIT 20"
+            "SELECT tag, COUNT(*) AS c FROM tags WHERE media_id IN (SELECT id FROM media WHERE user_id = ?) "
+            "GROUP BY tag ORDER BY c DESC LIMIT 20",
+            (uid,),
         )
         tag_distribution = [TagCount(tag=r["tag"], count=r["c"]) for r in cur.fetchall()]
 
         cur.execute(
             "SELECT id, filename, gps_lat, gps_lon FROM media "
-            "WHERE gps_lat IS NOT NULL AND gps_lon IS NOT NULL"
+            "WHERE user_id = ? AND gps_lat IS NOT NULL AND gps_lon IS NOT NULL",
+            (uid,),
         )
         map_hotspots = [
             MapHotspot(media_id=r["id"], filename=r["filename"], lat=r["gps_lat"], lon=r["gps_lon"])
@@ -103,7 +112,7 @@ class SettingsOut(BaseModel):
 
 
 @router.get("/settings", response_model=SettingsOut)
-def get_settings() -> SettingsOut:
+def get_settings(current_user: CurrentUser = Depends(get_current_user)) -> SettingsOut:
     return SettingsOut(
         llm_provider=os.environ.get("LLM_PROVIDER", "mock"),
         anthropic_key_configured=bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -116,6 +125,6 @@ class ReindexOut(BaseModel):
 
 
 @router.post("/reindex", response_model=ReindexOut)
-def reindex() -> ReindexOut:
+def reindex(current_user: CurrentUser = Depends(get_current_user)) -> ReindexOut:
     count = reindex_all()
     return ReindexOut(reindexed=count)

@@ -98,6 +98,43 @@ npm run dev
 Open **http://localhost:5173**. Vite proxies all `/api/*` requests to the
 backend on :8000, so no CORS wrangling is needed in dev.
 
+### First run: create an account
+
+MemoryLens AI is multi-user: every item belongs to a signed-in account, and
+each account only ever sees its own media. On first run, open
+**http://localhost:5173/register** and create an account (email + password +
+display name) before uploading anything — you'll be redirected there
+automatically if you try to use the app signed out.
+
+## Authentication
+
+- **Registration / login**: `POST /api/auth/register` and `POST
+  /api/auth/login` validate the email format and a password policy (min 8
+  characters, at least one letter and one digit), hash passwords with
+  **bcrypt** (via `passlib`), and never store or log plaintext passwords.
+- **Tokens**: on success the API returns a short-lived **JWT access token**
+  (60 minutes, HS256, signed with `JWT_SECRET`) in the JSON response body,
+  and sets a longer-lived **refresh token** (7 days) as an **httpOnly
+  cookie** — JavaScript never touches the refresh token directly, which
+  keeps it safe from XSS.
+- **Using the API**: the frontend sends `Authorization: Bearer <access
+  token>` on every request. When an access token expires, the fetch
+  wrapper in `frontend/src/lib/api.ts` transparently calls `POST
+  /api/auth/refresh` (which reads the refresh cookie) to get a new
+  access/refresh pair, then retries the original request once — the user
+  never notices.
+- **Logout**: `POST /api/auth/logout` clears the refresh cookie; the
+  frontend also drops the in-memory/`localStorage` access token.
+- **Data isolation**: every `media`/search/dashboard/ask query is scoped
+  to `user_id = <current user>` at the SQL level (see `get_current_user` in
+  `backend/app/auth.py`, applied as a FastAPI dependency on every route in
+  `media.py`, `search.py`, `ask.py`, and `dashboard.py`) — one account can
+  never read another account's uploads, thumbnails, search results, or
+  Ask AI citations.
+- **Rate limiting**: `/api/auth/login` and `/api/auth/register` are limited
+  to 5 requests/minute per IP (via `slowapi`) to blunt brute-force/credential
+  stuffing attempts.
+
 ## Notes on the processing pipeline
 
 - Uploads are saved immediately and processed in a background thread per
@@ -151,3 +188,11 @@ provider is currently active.
   Docker-free.
 - SQLite, not Postgres — fine for a single-user local app, and FTS5 gives
   the same full-text search capability without an extra service to run.
+- JWT auth is deliberately simple: no refresh-token rotation or blacklist,
+  no password-reset/email-verification flow, and no OAuth/SSO — a single
+  signed access/refresh token pair is enough to demonstrate real
+  authentication and per-user data isolation without building an identity
+  platform.
+- The dev SQLite database was reset (not migrated) when the `users` table
+  and `media.user_id` column were added, since it only ever held
+  throwaway local test uploads with no real users attached.

@@ -24,8 +24,17 @@ for d in (DATA_DIR, UPLOADS_DIR, THUMBS_DIR, KEYFRAMES_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS media (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
     filename TEXT NOT NULL,
     media_type TEXT NOT NULL CHECK (media_type IN ('photo', 'video')),
     status TEXT NOT NULL DEFAULT 'pending',

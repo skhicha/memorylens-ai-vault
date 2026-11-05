@@ -47,22 +47,36 @@ def reindex_media(media_id: str, filename: str, tags: List[str], transcript) -> 
             )
 
 
-def search(query: str, limit: int = 40) -> List[SearchHit]:
+def search(query: str, limit: int = 40, user_id: Optional[str] = None) -> List[SearchHit]:
     match = _fts_escape(query)
     if not match:
         return []
     with db_cursor() as cur:
-        cur.execute(
-            """
-            SELECT media_id, source, segment_start, text,
-                   snippet(search_index, 3, '<mark>', '</mark>', '…', 12) AS snip
-            FROM search_index
-            WHERE search_index MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (match, limit),
-        )
+        if user_id:
+            cur.execute(
+                """
+                SELECT si.media_id, si.source, si.segment_start, si.text,
+                       snippet(search_index, 3, '<mark>', '</mark>', '…', 12) AS snip
+                FROM search_index si
+                JOIN media m ON m.id = si.media_id
+                WHERE search_index MATCH ? AND m.user_id = ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, user_id, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT media_id, source, segment_start, text,
+                       snippet(search_index, 3, '<mark>', '</mark>', '…', 12) AS snip
+                FROM search_index
+                WHERE search_index MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, limit),
+            )
         rows = cur.fetchall()
     return [
         SearchHit(
