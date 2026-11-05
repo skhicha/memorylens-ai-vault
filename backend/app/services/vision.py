@@ -44,9 +44,16 @@ class VideoMeta:
 def detect_faces(bgr_image: np.ndarray) -> List[Tuple[int, int, int, int]]:
     gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)
-    boxes = _face_cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
-    )
+    try:
+        boxes = _face_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
+        )
+    except cv2.error:
+        # Upstream OpenCV bug: detectMultiScale's internal rectangle
+        # grouping can segfault-as-exception on certain low-feature/uniform
+        # images (e.g. a flat-color test frame). No faces is the correct
+        # answer for such an image anyway, so treat the crash as "none found".
+        return []
     return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in boxes]
 
 
