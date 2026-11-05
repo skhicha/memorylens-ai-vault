@@ -1,8 +1,33 @@
+import type React from "react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SearchIcon, Video, ImageIcon } from "lucide-react";
-import { api, type SearchResult } from "../lib/api";
+import { api, withAuth, type SearchResult } from "../lib/api";
 import "./Search.css";
+
+// The backend highlights matches with literal `<mark>...</mark>` around
+// raw (unescaped) snippet text from SQLite FTS5's snippet(). Since that text
+// can come from a user-controlled filename, rendering it as HTML would be a
+// stored-XSS hole. Parse out just the two known delimiters ourselves and let
+// React escape every other character as plain text.
+function renderSnippet(snippet: string) {
+  const parts = snippet.split(/(<mark>|<\/mark>)/);
+  let highlighting = false;
+  const nodes: React.ReactNode[] = [];
+  parts.forEach((part, i) => {
+    if (part === "<mark>") {
+      highlighting = true;
+      return;
+    }
+    if (part === "</mark>") {
+      highlighting = false;
+      return;
+    }
+    if (!part) return;
+    nodes.push(highlighting ? <mark key={i}>{part}</mark> : <span key={i}>{part}</span>);
+  });
+  return nodes;
+}
 
 export function SearchPage() {
   const [q, setQ] = useState("");
@@ -65,7 +90,7 @@ export function SearchPage() {
             onClick={() => navigate(`/media/${r.media_id}`)}
           >
             {r.thumb_url ? (
-              <img className="search-result-thumb" src={r.thumb_url} alt="" />
+              <img className="search-result-thumb" src={withAuth(r.thumb_url)} alt="" />
             ) : (
               <div className="search-result-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {r.media_type === "video" ? <Video size={20} /> : <ImageIcon size={20} />}
@@ -77,7 +102,7 @@ export function SearchPage() {
                 <span className="tag-chip">{r.source}</span>
                 {r.segment_start !== null && <span className="tag-chip">@ {r.segment_start.toFixed(1)}s</span>}
               </div>
-              <div className="search-result-snippet" dangerouslySetInnerHTML={{ __html: r.snippet }} />
+              <div className="search-result-snippet">{renderSnippet(r.snippet)}</div>
             </div>
           </div>
         ))

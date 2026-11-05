@@ -39,7 +39,7 @@ class AskResult:
 
 
 def _gather_citations(question: str, user_id: str, limit: int = 8) -> List[Citation]:
-    hits = fts_search(question, limit=limit, user_id=user_id)
+    hits = fts_search(question, limit=limit, user_id=user_id, mode="or")
     citations: List[Citation] = []
     seen = set()
     for hit in hits:

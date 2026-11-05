@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Video, ImageIcon, Users } from "lucide-react";
 import type { MediaItem } from "../lib/api";
+import { withAuth } from "../lib/api";
 import "./MediaCard.css";
 
 function formatDate(iso: string): string {
@@ -14,7 +15,7 @@ export function MediaCard({ media }: { media: MediaItem }) {
   return (
     <div className="media-card" onClick={() => navigate(`/media/${media.id}`)}>
       {media.thumb_url ? (
-        <img className="media-card-thumb" src={media.thumb_url} alt={media.filename} loading="lazy" />
+        <img className="media-card-thumb" src={withAuth(media.thumb_url)} alt={media.filename} loading="lazy" />
       ) : (
         <div className="media-card-thumb-placeholder">
           {media.media_type === "video" ? <Video size={28} /> : <ImageIcon size={28} />}

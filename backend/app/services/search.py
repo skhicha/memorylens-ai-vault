@@ -17,14 +17,29 @@ class SearchHit:
     snippet: str
 
 
-def _fts_escape(q: str) -> str:
+_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "show", "me", "my", "any",
+    "of", "in", "on", "at", "to", "for", "with", "what", "whats", "where",
+    "who", "do", "does", "did", "i", "have", "has", "can", "you", "find",
+    "about", "it", "there",
+}
+
+
+def _fts_escape(q: str, mode: str = "and") -> str:
     """Builds a safe FTS5 MATCH query: strips characters FTS5's query syntax
-    treats specially and ANDs together the remaining tokens with a trailing
-    prefix wildcard, so "beach dog" finds rows containing both tokens."""
+    treats specially and joins the remaining tokens with a trailing prefix
+    wildcard. mode="and" (default, used by the literal Search page) requires
+    every token to match -- precise. mode="or" (used by Ask AI, since a
+    natural-language question like "Show me outdoor photos" should still
+    find a media item tagged just "outdoor") requires only one -- recall
+    over precision, with common stopwords dropped so they don't dilute it."""
     tokens = re.findall(r"[A-Za-z0-9_]+", q)
+    if mode == "or":
+        tokens = [t for t in tokens if t.lower() not in _STOPWORDS] or tokens
     if not tokens:
         return ""
-    return " AND ".join(f'"{t}"*' for t in tokens)
+    joiner = " OR " if mode == "or" else " AND "
+    return joiner.join(f'"{t}"*' for t in tokens)
 
 
 def reindex_media(media_id: str, filename: str, tags: List[str], transcript) -> None:
@@ -47,8 +62,8 @@ def reindex_media(media_id: str, filename: str, tags: List[str], transcript) -> 
             )
 
 
-def search(query: str, limit: int = 40, user_id: Optional[str] = None) -> List[SearchHit]:
-    match = _fts_escape(query)
+def search(query: str, limit: int = 40, user_id: Optional[str] = None, mode: str = "and") -> List[SearchHit]:
+    match = _fts_escape(query, mode=mode)
     if not match:
         return []
     with db_cursor() as cur:

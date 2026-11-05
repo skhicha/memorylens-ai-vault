@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
-import { api, type MediaItem } from "../lib/api";
+import { api, withAuth, type MediaItem } from "../lib/api";
 import "./Upload.css";
 
 interface UploadRow {
@@ -101,7 +101,7 @@ export function UploadPage() {
           {rows.map((row) => (
             <div key={row.key} className="upload-row">
               {row.media?.thumb_url ? (
-                <img className="upload-row-thumb" src={row.media.thumb_url} alt="" />
+                <img className="upload-row-thumb" src={withAuth(row.media.thumb_url)} alt="" />
               ) : (
                 <div className="upload-row-thumb" />
               )}

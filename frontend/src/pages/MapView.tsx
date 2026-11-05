@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "../lib/leafletIcons";
-import { api, type MediaItem } from "../lib/api";
+import { api, withAuth, type MediaItem } from "../lib/api";
 
 export function MapViewPage() {
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -36,7 +36,7 @@ export function MapViewPage() {
               <Marker key={item.id} position={[item.gps_lat as number, item.gps_lon as number]}>
                 <Popup>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {item.thumb_url && <img src={item.thumb_url} alt={item.filename} style={{ width: 160, borderRadius: 6 }} />}
+                    {item.thumb_url && <img src={withAuth(item.thumb_url)} alt={item.filename} style={{ width: 160, borderRadius: 6 }} />}
                     <strong>{item.filename}</strong>
                     <button className="btn" onClick={() => navigate(`/media/${item.id}`)}>
                       Open

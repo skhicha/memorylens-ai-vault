@@ -252,10 +252,22 @@ export const api = {
   },
 
   mediaFileUrl(id: string) {
-    return `/api/media/${id}/file`;
+    return withAuth(`/api/media/${id}/file`);
   },
 
   thumbnailUrl(id: string) {
-    return `/api/media/${id}/thumbnail`;
+    return withAuth(`/api/media/${id}/thumbnail`);
   },
 };
+
+// Plain <img>/<video src> tags can't set an Authorization header, so any
+// media byte-serving URL (thumbnail/keyframe/file) needs the access token
+// appended as a query param instead -- the backend's get_current_user
+// accepts either. Every list/detail response from the API embeds relative
+// paths like `/api/media/keyframe/<name>`, so this is also applied to those
+// via `withAuthUrl` wherever they're rendered.
+export function withAuth(path: string): string {
+  if (!accessToken) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}token=${encodeURIComponent(accessToken)}`;
+}

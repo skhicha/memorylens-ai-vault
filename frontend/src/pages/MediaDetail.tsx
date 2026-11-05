@@ -4,7 +4,7 @@ import { ArrowLeft, Trash2, MapPin, Camera, Clock3 } from "lucide-react";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "../lib/leafletIcons";
-import { api, type MediaDetail as MediaDetailType } from "../lib/api";
+import { api, withAuth, type MediaDetail as MediaDetailType } from "../lib/api";
 import { FaceBoxOverlay } from "../components/FaceBoxOverlay";
 import "./MediaDetail.css";
 
@@ -85,7 +85,7 @@ export function MediaDetailPage() {
                 {Array.from(new Map(media.faces.map((f) => [f.keyframe_url, f])).values()).map((f) =>
                   f.keyframe_url ? (
                     <div key={f.keyframe_url} className="keyframe-thumb" onClick={() => seekTo(f.frame_time)}>
-                      <img src={f.keyframe_url} alt={`t=${f.frame_time}s`} />
+                      <img src={withAuth(f.keyframe_url!)} alt={`t=${f.frame_time}s`} />
                       <div className="kf-time">{f.frame_time.toFixed(1)}s</div>
                     </div>
                   ) : null

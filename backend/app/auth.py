@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Cookie, Depends, Header, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException, Query
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -78,11 +78,21 @@ def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
     return CurrentUser(id=row["id"], email=row["email"], display_name=row["display_name"])
 
 
-def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "Missing or invalid Authorization header")
-    token = authorization.split(" ", 1)[1].strip()
-    user_id = decode_token(token, "access")
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+) -> CurrentUser:
+    # Plain <img>/<video> tags can't send an Authorization header, so media
+    # byte-serving routes (thumbnail/keyframe/file) accept the same access
+    # token as a `?token=` query param. Every other route only ever gets a
+    # header, since the frontend's fetch wrapper always sets it.
+    if authorization and authorization.lower().startswith("bearer "):
+        raw_token = authorization.split(" ", 1)[1].strip()
+    elif token:
+        raw_token = token
+    else:
+        raise HTTPException(401, "Missing or invalid access token")
+    user_id = decode_token(raw_token, "access")
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(401, "User not found")
