@@ -1,8 +1,9 @@
 import type React from "react";
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { SearchIcon, Video, ImageIcon } from "lucide-react";
 import { api, withAuth, type SearchResult } from "../lib/api";
+import { Skeleton } from "../components/Skeleton";
 import "./Search.css";
 
 // The backend highlights matches with literal `<mark>...</mark>` around
@@ -35,6 +36,7 @@ export function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const runSearch = async (query: string) => {
     if (!query.trim()) {
@@ -51,6 +53,15 @@ export function SearchPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const initial = searchParams.get("q");
+    if (initial) {
+      setQ(initial);
+      runSearch(initial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div>
@@ -79,7 +90,17 @@ export function SearchPage() {
       </form>
 
       {loading ? (
-        <div className="empty-state">Searching…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="search-result">
+              <Skeleton style={{ width: 56, height: 56, borderRadius: 10, flexShrink: 0 }} />
+              <div className="search-result-main" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <Skeleton style={{ height: 12, width: "50%" }} />
+                <Skeleton style={{ height: 11, width: "80%" }} />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : searched && results.length === 0 ? (
         <div className="empty-state">No matches for “{q}”.</div>
       ) : (

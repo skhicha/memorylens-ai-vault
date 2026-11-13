@@ -18,6 +18,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-insecure-secret-change-me")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60
 REFRESH_TOKEN_DAYS = 7
+OTP_TOKEN_MINUTES = 5
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -49,6 +50,10 @@ def create_refresh_token(user_id: str) -> str:
     return _create_token(user_id, "refresh", timedelta(days=REFRESH_TOKEN_DAYS))
 
 
+def create_otp_token(user_id: str) -> str:
+    return _create_token(user_id, "otp", timedelta(minutes=OTP_TOKEN_MINUTES))
+
+
 def decode_token(token: str, expected_type: str) -> str:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -63,19 +68,40 @@ def decode_token(token: str, expected_type: str) -> str:
 
 
 class CurrentUser:
-    def __init__(self, id: str, email: str, display_name: str):
+    def __init__(
+        self,
+        id: str,
+        email: str,
+        display_name: str,
+        role: str = "member",
+        email_verified: bool = False,
+        otp_enabled: bool = False,
+    ):
         self.id = id
         self.email = email
         self.display_name = display_name
+        self.role = role
+        self.email_verified = email_verified
+        self.otp_enabled = otp_enabled
 
 
 def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
     with db_cursor() as cur:
-        cur.execute("SELECT id, email, display_name FROM users WHERE id = ?", (user_id,))
+        cur.execute(
+            "SELECT id, email, display_name, role, email_verified, otp_enabled FROM users WHERE id = ?",
+            (user_id,),
+        )
         row = cur.fetchone()
     if not row:
         return None
-    return CurrentUser(id=row["id"], email=row["email"], display_name=row["display_name"])
+    return CurrentUser(
+        id=row["id"],
+        email=row["email"],
+        display_name=row["display_name"],
+        role=row["role"] or "member",
+        email_verified=bool(row["email_verified"]),
+        otp_enabled=bool(row["otp_enabled"]),
+    )
 
 
 def get_current_user(
@@ -103,3 +129,9 @@ def get_refresh_user_id(refresh_token: Optional[str] = Cookie(None)) -> str:
     if not refresh_token:
         raise HTTPException(401, "Missing refresh token")
     return decode_token(refresh_token, "refresh")
+
+
+def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+    return current_user

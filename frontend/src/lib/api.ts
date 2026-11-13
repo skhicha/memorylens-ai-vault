@@ -26,6 +26,7 @@ export interface MediaItem {
   error: string | null;
   tags: string[];
   thumb_url: string | null;
+  is_favorite: boolean;
 }
 
 export interface FaceBox {
@@ -149,12 +150,45 @@ export interface AuthUser {
   id: string;
   email: string;
   display_name: string;
+  role: "admin" | "member";
+  email_verified: boolean;
+  otp_enabled: boolean;
 }
 
 export interface AuthResponse {
   access_token: string;
   token_type: string;
   user: AuthUser;
+}
+
+export interface OtpRequiredResponse {
+  otp_required: true;
+  otp_token: string;
+}
+
+// Login returns either full tokens, or (when the account has OTP enabled)
+// a short-lived otp_token the caller must exchange via otpVerify.
+export type LoginResult = AuthResponse | OtpRequiredResponse;
+
+export function isOtpRequired(res: LoginResult): res is OtpRequiredResponse {
+  return (res as OtpRequiredResponse).otp_required === true;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: "admin" | "member";
+  is_active: boolean;
+  email_verified: boolean;
+  created_at: string;
+  media_count: number;
+}
+
+export interface AdminStats {
+  total_users: number;
+  total_media: number;
+  total_admins: number;
 }
 
 export const api = {
@@ -167,10 +201,62 @@ export const api = {
   },
 
   login(email: string, password: string) {
-    return request<AuthResponse>(`/api/auth/login`, {
+    return request<LoginResult>(`/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+    });
+  },
+
+  otpVerify(otp_token: string, code: string) {
+    return request<AuthResponse>(`/api/auth/otp/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp_token, code }),
+    });
+  },
+
+  otpResend(otp_token: string) {
+    return request<{ ok: boolean }>(`/api/auth/otp/resend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp_token }),
+    });
+  },
+
+  verifyEmail(code: string) {
+    return request<{ ok: boolean }>(`/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  resendVerification() {
+    return request<{ ok: boolean }>(`/api/auth/resend-verification`, { method: "POST" });
+  },
+
+  forgotPassword(email: string) {
+    return request<{ ok: boolean }>(`/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  resetPassword(email: string, code: string, new_password: string) {
+    return request<{ ok: boolean }>(`/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code, new_password }),
+    });
+  },
+
+  updateMe(otp_enabled: boolean) {
+    return request<AuthUser>(`/api/auth/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp_enabled }),
     });
   },
 
@@ -184,6 +270,30 @@ export const api = {
 
   me() {
     return request<AuthUser>(`/api/auth/me`);
+  },
+
+  adminListUsers() {
+    return request<{ users: AdminUser[] }>(`/api/admin/users`);
+  },
+
+  adminStats() {
+    return request<AdminStats>(`/api/admin/stats`);
+  },
+
+  adminDeactivate(id: string) {
+    return request<{ ok: boolean }>(`/api/admin/users/${id}/deactivate`, { method: "POST" });
+  },
+
+  adminReactivate(id: string) {
+    return request<{ ok: boolean }>(`/api/admin/users/${id}/reactivate`, { method: "POST" });
+  },
+
+  adminSetRole(id: string, role: "admin" | "member") {
+    return request<{ ok: boolean }>(`/api/admin/users/${id}/role`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
   },
 
   uploadMedia(file: File, onProgress?: (pct: number) => void): Promise<MediaItem> {
@@ -225,6 +335,14 @@ export const api = {
 
   deleteMedia(id: string) {
     return request<{ ok: boolean }>(`/api/media/${id}`, { method: "DELETE" });
+  },
+
+  toggleFavorite(id: string, is_favorite: boolean) {
+    return request<MediaItem>(`/api/media/${id}/favorite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_favorite }),
+    });
   },
 
   search(q: string) {

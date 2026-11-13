@@ -13,8 +13,9 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.db import init_db
-from app.routers import ask, auth, dashboard, media, search
+from app.routers import admin, ask, auth, dashboard, media, search
 from app.routers.auth import limiter
+from app.services.pipeline import start_worker
 
 app = FastAPI(
     title="MemoryLens AI",
@@ -54,6 +55,7 @@ async def security_headers(request: Request, call_next):
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    start_worker()
 
 
 @app.get("/api/health")
@@ -66,3 +68,4 @@ app.include_router(media.router)
 app.include_router(search.router)
 app.include_router(ask.router)
 app.include_router(dashboard.router)
+app.include_router(admin.router)

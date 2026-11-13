@@ -1,14 +1,21 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, getAccessToken, setAccessToken, setRefreshHandler, type AuthUser } from "./api";
+import { api, getAccessToken, isOtpRequired, setAccessToken, setRefreshHandler, type AuthUser } from "./api";
 
 const STORAGE_KEY = "memorylens_access_token";
+
+// Discriminated login result: either login completed, or the account needs
+// an OTP code. The Login page drives the OTP UI off this, not AuthContext.
+export type LoginOutcome = { status: "logged_in" } | { status: "otp_required"; otpToken: string };
 
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginOutcome>;
+  completeOtpLogin: (otpToken: string, code: string) => Promise<void>;
+  resendOtp: (otpToken: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -56,11 +63,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<LoginOutcome> => {
     const res = await api.login(email, password);
+    if (isOtpRequired(res)) {
+      return { status: "otp_required", otpToken: res.otp_token };
+    }
     setAccessToken(res.access_token);
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
+    return { status: "logged_in" };
+  };
+
+  const completeOtpLogin = async (otpToken: string, code: string) => {
+    const res = await api.otpVerify(otpToken, code);
+    setAccessToken(res.access_token);
+    localStorage.setItem(STORAGE_KEY, res.access_token);
+    setUser(res.user);
+  };
+
+  const resendOtp = async (otpToken: string) => {
+    await api.otpResend(otpToken);
+  };
+
+  const refreshUser = async () => {
+    const fresh = await api.me();
+    setUser(fresh);
   };
 
   const register = async (email: string, password: string, displayName: string) => {
@@ -82,7 +109,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{ user, loading, login, completeOtpLogin, resendOtp, register, logout, refreshUser }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
 }
 

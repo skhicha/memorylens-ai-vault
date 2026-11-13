@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS otp_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('login', 'verify_email', 'password_reset')),
+    expires_at TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_otp_codes_user ON otp_codes(user_id);
+
 CREATE TABLE IF NOT EXISTS media (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
@@ -56,7 +67,8 @@ CREATE TABLE IF NOT EXISTS media (
     time_of_day TEXT,
     outdoor_guess TEXT,
     asr_status TEXT NOT NULL DEFAULT 'skipped',
-    error TEXT
+    error TEXT,
+    is_favorite INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS faces (
@@ -107,11 +119,39 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+# Columns added to `users` after its initial release. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so each migration is applied with ALTER TABLE
+# and the resulting "duplicate column" error (raised on a database that
+# already has the column) is swallowed, keeping init_db() safe to run
+# against an existing dev database as well as a brand-new one.
+USER_COLUMN_MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN otp_enabled INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'",
+    "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1",
+]
+
+MEDIA_COLUMN_MIGRATIONS = [
+    "ALTER TABLE media ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for statement in USER_COLUMN_MIGRATIONS + MEDIA_COLUMN_MIGRATIONS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+    conn.commit()
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
         conn.commit()
+        _migrate(conn)
     finally:
         conn.close()
 

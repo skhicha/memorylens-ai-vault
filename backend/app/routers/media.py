@@ -75,6 +75,7 @@ class MediaOut(BaseModel):
     error: Optional[str] = None
     tags: List[str] = []
     thumb_url: Optional[str] = None
+    is_favorite: bool = False
 
 
 class MediaDetailOut(MediaOut):
@@ -105,6 +106,7 @@ def _row_to_media_out(row, tags: List[str]) -> MediaOut:
         error=row["error"],
         tags=tags,
         thumb_url=f"/api/media/{row['id']}/thumbnail" if row["thumb_path"] else None,
+        is_favorite=bool(row["is_favorite"]),
     )
 
 
@@ -229,6 +231,29 @@ def get_media(media_id: str, current_user: CurrentUser = Depends(get_current_use
 
     base = _row_to_media_out(row, tags)
     return MediaDetailOut(**base.model_dump(), faces=faces, transcript=transcript)
+
+
+class FavoriteIn(BaseModel):
+    is_favorite: bool
+
+
+@router.post("/{media_id}/favorite", response_model=MediaOut)
+def set_favorite(
+    media_id: str, body: FavoriteIn, current_user: CurrentUser = Depends(get_current_user)
+) -> MediaOut:
+    with db_cursor() as cur:
+        row = _get_owned_media_row(media_id, current_user.id, cur)
+        if not row:
+            raise HTTPException(404, "Media not found")
+        cur.execute(
+            "UPDATE media SET is_favorite = ? WHERE id = ?",
+            (1 if body.is_favorite else 0, media_id),
+        )
+        cur.execute("SELECT * FROM media WHERE id = ?", (media_id,))
+        row = cur.fetchone()
+        cur.execute("SELECT tag FROM tags WHERE media_id = ?", (media_id,))
+        tags = [r["tag"] for r in cur.fetchall()]
+    return _row_to_media_out(row, tags)
 
 
 @router.delete("/{media_id}")

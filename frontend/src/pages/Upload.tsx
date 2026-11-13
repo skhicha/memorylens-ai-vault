@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, CheckCircle2 } from "lucide-react";
 import { api, withAuth, type MediaItem } from "../lib/api";
 import "./Upload.css";
 
@@ -124,7 +124,11 @@ export function UploadPage() {
                   </>
                 )}
               </div>
-              {row.media && <span className={`status-pill ${row.media.status}`}>{row.media.status}</span>}
+              {row.media?.status === "ready" ? (
+                <CheckCircle2 size={20} className="upload-row-done" />
+              ) : (
+                row.media && <span className={`status-pill ${row.media.status}`}>{row.media.status}</span>
+              )}
             </div>
           ))}
         </div>

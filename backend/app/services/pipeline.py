@@ -1,6 +1,7 @@
 """
-Background processing pipeline run in a plain daemon thread per upload
-(no task queue / no Docker needed -- fine at the scale of a personal vault).
+Background processing pipeline run by a single long-lived worker thread that
+drains a queue (no task queue service / no Docker needed -- fine at the
+scale of a personal vault).
 
 For photos: EXIF -> face detect -> thumbnail -> tag -> index.
 For videos: probe metadata -> keyframes+faces -> ASR (best-effort) ->
@@ -9,9 +10,20 @@ For videos: probe metadata -> keyframes+faces -> ASR (best-effort) ->
 Every step is wrapped so a single failure (corrupt file, missing codec,
 whisper model unavailable, ...) marks that step skipped/failed instead of
 taking down the whole item; only a truly unreadable file ends as 'failed'.
+
+IMPORTANT: uploads are processed one at a time by a single worker thread,
+never concurrently. OpenCV's Haar cascade (`detectMultiScale`) and
+faster-whisper/ctranslate2 are native-extension libraries whose internal
+thread pools are not safe to invoke concurrently from multiple Python
+threads in one process -- running them in parallel (one thread per upload)
+reliably segfaults the whole server. Serializing all processing through one
+worker thread eliminates that by construction: only one native call happens
+at a time, ever. `cv2.setNumThreads(1)` below and `cpu_threads=1` on the
+whisper model are defense-in-depth on top of that, not a substitute for it.
 """
 from __future__ import annotations
 
+import queue
 import threading
 import traceback
 from pathlib import Path
@@ -23,8 +35,38 @@ from app.db import KEYFRAMES_DIR, THUMBS_DIR, db_cursor
 from app.services import asr, exif, vision
 from app.services.search import reindex_media
 
+# Defense in depth: keep OpenCV's own internal thread pool from adding any
+# concurrency of its own on top of our single-worker serialization.
+cv2.setNumThreads(1)
+
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+
+_queue: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
+_worker_started = False
+_worker_lock = threading.Lock()
+
+
+def _worker_loop() -> None:
+    while True:
+        media_id, file_path, media_type = _queue.get()
+        try:
+            _process_media(media_id, file_path, media_type)
+        finally:
+            _queue.task_done()
+
+
+def start_worker() -> None:
+    """Starts the single background worker thread, if not already running.
+    Idempotent -- safe to call from FastAPI's startup hook even if
+    `uvicorn --reload` reimports this module more than once per process."""
+    global _worker_started
+    with _worker_lock:
+        if _worker_started:
+            return
+        t = threading.Thread(target=_worker_loop, daemon=True, name="media-pipeline-worker")
+        t.start()
+        _worker_started = True
 
 
 def classify_media_type(filename: str) -> str:
@@ -43,8 +85,11 @@ def _set_status(media_id: str, **fields) -> None:
 
 
 def process_media_async(media_id: str, file_path: str, media_type: str) -> None:
-    t = threading.Thread(target=_process_media, args=(media_id, file_path, media_type), daemon=True)
-    t.start()
+    """Enqueues an item for processing. Returns immediately -- the actual
+    work happens on the single background worker thread, one item at a
+    time, so the upload HTTP response never blocks on processing."""
+    start_worker()  # idempotent; also started at app startup
+    _queue.put((media_id, file_path, media_type))
 
 
 def _process_media(media_id: str, file_path: str, media_type: str) -> None:

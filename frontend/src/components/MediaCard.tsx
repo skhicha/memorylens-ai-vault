@@ -1,6 +1,7 @@
+import { useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Video, ImageIcon, Users } from "lucide-react";
-import type { MediaItem } from "../lib/api";
+import { Video, ImageIcon, Users, Star, Check } from "lucide-react";
+import { api, type MediaItem } from "../lib/api";
 import { withAuth } from "../lib/api";
 import "./MediaCard.css";
 
@@ -10,16 +11,69 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-export function MediaCard({ media }: { media: MediaItem }) {
+export function MediaCard({
+  media,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+  onFavoriteChange,
+}: {
+  media: MediaItem;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  onFavoriteChange?: (isFavorite: boolean) => void;
+}) {
   const navigate = useNavigate();
+  const [favorite, setFavorite] = useState(media.is_favorite);
+  const [favBusy, setFavBusy] = useState(false);
+
+  const onCardClick = () => {
+    if (selectable) {
+      onToggleSelect?.();
+      return;
+    }
+    navigate(`/media/${media.id}`);
+  };
+
+  const onToggleFavorite = async (e: MouseEvent) => {
+    e.stopPropagation();
+    if (favBusy) return;
+    const next = !favorite;
+    setFavorite(next);
+    onFavoriteChange?.(next);
+    setFavBusy(true);
+    try {
+      await api.toggleFavorite(media.id, next);
+    } catch {
+      setFavorite(!next);
+      onFavoriteChange?.(!next);
+    } finally {
+      setFavBusy(false);
+    }
+  };
+
   return (
-    <div className="media-card" onClick={() => navigate(`/media/${media.id}`)}>
+    <div className={`media-card${selected ? " media-card-selected" : ""}`} onClick={onCardClick}>
       {media.thumb_url ? (
         <img className="media-card-thumb" src={withAuth(media.thumb_url)} alt={media.filename} loading="lazy" />
       ) : (
         <div className="media-card-thumb-placeholder">
           {media.media_type === "video" ? <Video size={28} /> : <ImageIcon size={28} />}
         </div>
+      )}
+
+      {selectable ? (
+        <div className={`media-card-select-box${selected ? " checked" : ""}`}>{selected && <Check size={14} />}</div>
+      ) : (
+        <button
+          type="button"
+          className={`media-card-fav${favorite ? " active" : ""}`}
+          onClick={onToggleFavorite}
+          aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+        >
+          <Star size={16} fill={favorite ? "currentColor" : "none"} />
+        </button>
       )}
 
       <div className="media-card-badge">

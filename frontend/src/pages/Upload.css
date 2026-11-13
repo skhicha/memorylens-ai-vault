@@ -4,7 +4,7 @@
   padding: 56px 24px;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
   color: var(--text-muted);
 }
 
@@ -12,6 +12,12 @@
   border-color: var(--accent);
   background: var(--surface);
   color: var(--text);
+  transform: scale(1.01);
+}
+
+.dropzone.active .dropzone-icon {
+  color: var(--accent-2);
+  transform: scale(1.1);
 }
 
 .dropzone-icon {
@@ -24,6 +30,26 @@
   justify-content: center;
   background: var(--surface-strong);
   color: var(--accent);
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.upload-row-done {
+  color: var(--success);
+  animation: ml-pop-in 0.3s ease;
+}
+
+@keyframes ml-pop-in {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .upload-list {

@@ -143,6 +143,20 @@ button {
   filter: brightness(1.08);
 }
 
+.btn-danger {
+  background: rgba(255, 107, 107, 0.14);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: rgba(255, 107, 107, 0.22);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -229,4 +243,10 @@ select:focus {
   .app-main {
     padding: 20px 16px 48px;
   }
+}
+
+.app-main-auth {
+  padding: 0;
+  max-width: none;
+  margin: 0;
 }

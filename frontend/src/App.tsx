@@ -1,10 +1,13 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Navbar } from "./components/Navbar";
+import { CommandPalette } from "./components/CommandPalette";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { VerifyEmailBanner } from "./components/VerifyEmailBanner";
 import { AuthProvider } from "./lib/AuthContext";
 import { useAuth } from "./lib/AuthContext";
 import { LoginPage } from "./pages/Login";
 import { RegisterPage } from "./pages/Register";
+import { ForgotPasswordPage } from "./pages/ForgotPassword";
 import { UploadPage } from "./pages/Upload";
 import { LibraryPage } from "./pages/Library";
 import { MediaDetailPage } from "./pages/MediaDetail";
@@ -14,16 +17,25 @@ import { SearchPage } from "./pages/Search";
 import { AskAIPage } from "./pages/AskAI";
 import { DashboardPage } from "./pages/Dashboard";
 import { SettingsPage } from "./pages/Settings";
+import { AdminPage } from "./pages/Admin";
+
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password"];
 
 function AppShell() {
   const { user } = useAuth();
+  const location = useLocation();
+  const isAuthRoute = AUTH_ROUTES.includes(location.pathname);
+  const showShell = !!user && !isAuthRoute;
   return (
     <div className="app-shell">
-      {user && <Navbar />}
-      <main className="app-main">
+      {showShell && <Navbar />}
+      {showShell && <CommandPalette />}
+      <main className={isAuthRoute ? "app-main app-main-auth" : "app-main"}>
+        {showShell && <VerifyEmailBanner />}
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/" element={<Navigate to="/library" replace />} />
           <Route
             path="/upload"
@@ -94,6 +106,14 @@ function AppShell() {
             element={
               <ProtectedRoute>
                 <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute requireAdmin>
+                <AdminPage />
               </ProtectedRoute>
             }
           />

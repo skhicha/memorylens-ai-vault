@@ -15,9 +15,21 @@ import {
   YAxis,
 } from "recharts";
 import { api, type DashboardSummary } from "../lib/api";
+import { useCountUp } from "../lib/useCountUp";
+import { StatTileSkeleton } from "../components/Skeleton";
 import "./Dashboard.css";
 
 const COLORS = ["#7c6cff", "#4fd1c5", "#f0b429", "#ff6b6b", "#3ddc97", "#5a4ae0"];
+
+function StatCard({ value, label }: { value: number; label: string }) {
+  const display = useCountUp(value);
+  return (
+    <div className="glass-card stat-card">
+      <div className="stat-value">{display}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  );
+}
 
 export function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -26,7 +38,21 @@ export function DashboardPage() {
     api.dashboardSummary().then(setSummary);
   }, []);
 
-  if (!summary) return <div className="empty-state">Loading…</div>;
+  if (!summary) {
+    return (
+      <div>
+        <div className="page-header">
+          <h1>Dashboard</h1>
+          <p>An overview of what's in your vault.</p>
+        </div>
+        <div className="stat-grid">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <StatTileSkeleton key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -36,26 +62,11 @@ export function DashboardPage() {
       </div>
 
       <div className="stat-grid">
-        <div className="glass-card stat-card">
-          <div className="stat-value">{summary.total_media}</div>
-          <div className="stat-label">Total media</div>
-        </div>
-        <div className="glass-card stat-card">
-          <div className="stat-value">{summary.total_photos}</div>
-          <div className="stat-label">Photos</div>
-        </div>
-        <div className="glass-card stat-card">
-          <div className="stat-value">{summary.total_videos}</div>
-          <div className="stat-label">Videos</div>
-        </div>
-        <div className="glass-card stat-card">
-          <div className="stat-value">{summary.total_faces}</div>
-          <div className="stat-label">Faces detected</div>
-        </div>
-        <div className="glass-card stat-card">
-          <div className="stat-value">{summary.total_with_gps}</div>
-          <div className="stat-label">Geotagged items</div>
-        </div>
+        <StatCard value={summary.total_media} label="Total media" />
+        <StatCard value={summary.total_photos} label="Photos" />
+        <StatCard value={summary.total_videos} label="Videos" />
+        <StatCard value={summary.total_faces} label="Faces detected" />
+        <StatCard value={summary.total_with_gps} label="Geotagged items" />
       </div>
 
       <div className="chart-grid">

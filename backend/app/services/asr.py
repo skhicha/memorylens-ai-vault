@@ -40,7 +40,11 @@ def _get_model():
             from faster_whisper import WhisperModel
 
             size = os.environ.get("WHISPER_MODEL", "tiny")
-            _model = WhisperModel(size, device="cpu", compute_type="int8")
+            # Defense in depth: pin ctranslate2's own internal thread pool to
+            # 1 on top of the single-worker pipeline serialization (see
+            # pipeline.py) so no remaining internal concurrency can race
+            # against OpenCV's native calls.
+            _model = WhisperModel(size, device="cpu", compute_type="int8", cpu_threads=1, num_workers=1)
         except Exception as exc:  # noqa: BLE001 - must never crash the pipeline
             print(f"[asr] whisper model unavailable, skipping ASR step: {exc}")
             _model_load_failed = True

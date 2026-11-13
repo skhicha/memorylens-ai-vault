@@ -41,12 +41,31 @@ class VideoMeta:
     fps: Optional[float] = None
 
 
+_DETECT_MAX_DIM = 1024  # working resolution for the cascade, see note below
+
+
 def detect_faces(bgr_image: np.ndarray) -> List[Tuple[int, int, int, int]]:
-    gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
+    # Run the cascade on a downscaled copy, then scale boxes back up.
+    # Haar cascades are tuned for modest resolutions; run directly on a
+    # multi-thousand-pixel phone/DSLR photo, the sliding window visits many
+    # more candidate scales/positions and throws noticeably more spurious
+    # false-positive boxes (confirmed: a single-subject 2687x3356 portrait
+    # produced 1 correct box + 6 false positives on the background/suit at
+    # full resolution). Downscaling first is the standard mitigation and
+    # also makes detection faster on large uploads.
+    h, w = bgr_image.shape[:2]
+    scale = _DETECT_MAX_DIM / max(h, w)
+    if scale < 1:
+        small = cv2.resize(bgr_image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        small = bgr_image
+        scale = 1.0
+
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)
     try:
         boxes = _face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
+            gray, scaleFactor=1.1, minNeighbors=8, minSize=(40, 40)
         )
     except cv2.error:
         # Upstream OpenCV bug: detectMultiScale's internal rectangle
@@ -54,7 +73,7 @@ def detect_faces(bgr_image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         # images (e.g. a flat-color test frame). No faces is the correct
         # answer for such an image anyway, so treat the crash as "none found".
         return []
-    return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in boxes]
+    return [(int(x / scale), int(y / scale), int(w / scale), int(h / scale)) for (x, y, w, h) in boxes]
 
 
 def draw_face_boxes(bgr_image: np.ndarray, boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:

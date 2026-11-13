@@ -1,16 +1,49 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { api, type SettingsInfo } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import { ThemeToggle } from "../components/ThemeToggle";
 
 export function SettingsPage() {
+  const { user, refreshUser } = useAuth();
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [reindexMsg, setReindexMsg] = useState<string | null>(null);
+  const [otpSaving, setOtpSaving] = useState(false);
+  const [otpMsg, setOtpMsg] = useState<string | null>(null);
+  const [verifySending, setVerifySending] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
 
   useEffect(() => {
     api.settings().then(setSettings);
   }, []);
+
+  const toggleOtp = async () => {
+    if (!user) return;
+    setOtpSaving(true);
+    setOtpMsg(null);
+    try {
+      await api.updateMe(!user.otp_enabled);
+      await refreshUser();
+    } catch (err) {
+      setOtpMsg((err as Error).message.replace(/^\d+\s*/, "") || "Could not update setting");
+    } finally {
+      setOtpSaving(false);
+    }
+  };
+
+  const sendVerification = async () => {
+    setVerifySending(true);
+    setVerifyMsg(null);
+    try {
+      await api.resendVerification();
+      setVerifyMsg("Verification email sent — check your inbox.");
+    } catch (err) {
+      setVerifyMsg((err as Error).message.replace(/^\d+\s*/, "") || "Could not send verification email");
+    } finally {
+      setVerifySending(false);
+    }
+  };
 
   const runReindex = async () => {
     setReindexing(true);
@@ -73,6 +106,46 @@ export function SettingsPage() {
           ) : (
             "Loading…"
           )}
+        </div>
+
+        <div className="glass-card" style={{ padding: 20 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-muted)", textTransform: "uppercase" }}>
+            <ShieldCheck size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
+            Security
+          </h3>
+          <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div>
+                <div>Email verification</div>
+                <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                  {user?.email_verified ? (
+                    <span style={{ color: "var(--success)" }}>Verified</span>
+                  ) : (
+                    <span style={{ color: "var(--danger)" }}>Not verified</span>
+                  )}
+                </div>
+              </div>
+              {!user?.email_verified && (
+                <button className="btn" onClick={sendVerification} disabled={verifySending}>
+                  {verifySending ? "Sending…" : "Resend verification email"}
+                </button>
+              )}
+            </div>
+            {verifyMsg && <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 10 }}>{verifyMsg}</div>}
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div>Require a login code (OTP)</div>
+                <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                  Adds a one-time emailed code when signing in.
+                </div>
+              </div>
+              <button className="btn" onClick={toggleOtp} disabled={otpSaving}>
+                {otpSaving ? "Saving…" : user?.otp_enabled ? "Disable" : "Enable"}
+              </button>
+            </div>
+            {otpMsg && <div style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{otpMsg}</div>}
+          </div>
         </div>
 
         <div className="glass-card" style={{ padding: 20 }}>

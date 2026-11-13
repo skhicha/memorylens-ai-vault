@@ -10,6 +10,7 @@ import {
   Settings as SettingsIcon,
   Camera,
   LogOut,
+  ShieldCheck,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "../lib/AuthContext";
@@ -58,6 +59,12 @@ export function Navbar() {
             <span>{label}</span>
           </NavLink>
         ))}
+        {user?.role === "admin" && (
+          <NavLink to="/admin" className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}>
+            <ShieldCheck size={18} />
+            <span>Admin</span>
+          </NavLink>
+        )}
       </div>
 
       <div className="navbar-footer">
