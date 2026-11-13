@@ -179,6 +179,11 @@ h1, h2, h3 {
 }
 
 .btn-primary:hover {
+  /* Must redeclare its own background -- .btn:hover's `background: var(--surface)`
+     has equal specificity and would otherwise win here, replacing the
+     gradient with a near-white surface in light mode while the text stayed
+     white, making the button's label invisible. Same bug for .btn-danger. */
+  background: linear-gradient(135deg, var(--accent), #5a4ae0);
   filter: brightness(1.08);
   box-shadow: 0 10px 28px rgba(124, 108, 255, 0.45);
 }

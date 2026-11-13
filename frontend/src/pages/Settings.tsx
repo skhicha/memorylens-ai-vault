@@ -159,20 +159,24 @@ export function SettingsPage() {
         </div>
 
         <div className="glass-card" style={{ padding: 20 }}>
-          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-muted)", textTransform: "uppercase" }}>
-            <Sparkles size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
-            Ask AI provider
-          </h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ margin: 0, fontSize: 14, color: "var(--text-muted)", textTransform: "uppercase" }}>
+              <Sparkles size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
+              Ask AI provider
+            </h3>
+            {settings?.llm_provider === "mock" && (
+              <span className="tag-chip" style={{ flexShrink: 0 }}>
+                offline mode
+              </span>
+            )}
+          </div>
           {settings ? (
             <div style={{ fontSize: 14, lineHeight: 1.8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span>
-                  {settings.llm_provider === "mock"
-                    ? "Running fully offline — answers are generated from your own data, no cloud calls."
-                    : "Connected to a live AI model for richer answers."}
-                </span>
-                {settings.llm_provider === "mock" && <span className="tag-chip">offline mode</span>}
-              </div>
+              <p style={{ margin: 0 }}>
+                {settings.llm_provider === "mock"
+                  ? "Running fully offline — answers are generated from your own data, no cloud calls."
+                  : "Connected to a live AI model for richer answers."}
+              </p>
               {settings.llm_provider === "anthropic" && !settings.anthropic_key_configured && (
                 <div style={{ color: "var(--danger)", fontSize: 13, marginTop: 4 }}>
                   API key missing — falling back to offline mode until it's set.
