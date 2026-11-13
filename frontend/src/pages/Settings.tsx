@@ -52,7 +52,7 @@ export function SettingsPage() {
     setVerifyMsg(null);
     try {
       await api.resendVerification();
-      setVerifyMsg("Verification email sent — check your inbox (or the backend's terminal log if SMTP isn't configured).");
+      setVerifyMsg("Verification email sent — check your inbox.");
     } catch (err) {
       setVerifyMsg((err as Error).message.replace(/^\d+\s*/, "") || "Could not send verification email");
     } finally {
@@ -165,26 +165,36 @@ export function SettingsPage() {
           </h3>
           {settings ? (
             <div style={{ fontSize: 14, lineHeight: 1.8 }}>
-              <div>
-                Provider: <strong>{settings.llm_provider}</strong>{" "}
-                {settings.llm_provider === "mock" && <span className="tag-chip">offline / template mode</span>}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span>
+                  {settings.llm_provider === "mock"
+                    ? "Running fully offline — answers are generated from your own data, no cloud calls."
+                    : "Connected to a live AI model for richer answers."}
+                </span>
+                {settings.llm_provider === "mock" && <span className="tag-chip">offline mode</span>}
               </div>
-              {settings.llm_provider === "anthropic" && (
-                <div>
-                  API key configured:{" "}
-                  <strong style={{ color: settings.anthropic_key_configured ? "var(--success)" : "var(--danger)" }}>
-                    {settings.anthropic_key_configured ? "yes" : "no"}
-                  </strong>
+              {settings.llm_provider === "anthropic" && !settings.anthropic_key_configured && (
+                <div style={{ color: "var(--danger)", fontSize: 13, marginTop: 4 }}>
+                  API key missing — falling back to offline mode until it's set.
                 </div>
               )}
-              <div>
-                Whisper ASR model: <strong>{settings.whisper_model}</strong>
-              </div>
-              <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 10 }}>
-                Switch providers by setting <code>LLM_PROVIDER=anthropic</code> and{" "}
-                <code>ANTHROPIC_API_KEY=...</code> in <code>backend/.env</code>, then restart the backend. See
-                the README for details.
-              </p>
+              <details style={{ marginTop: 10 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12.5, color: "var(--text-muted)" }}>
+                  Developer details
+                </summary>
+                <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 8 }}>
+                  <div>
+                    Provider: <code>{settings.llm_provider}</code>
+                  </div>
+                  <div>
+                    Whisper ASR model: <code>{settings.whisper_model}</code>
+                  </div>
+                  <p style={{ marginTop: 8 }}>
+                    Switch providers by setting <code>LLM_PROVIDER=anthropic</code> and{" "}
+                    <code>ANTHROPIC_API_KEY=...</code> in <code>backend/.env</code>, then restart the backend.
+                  </p>
+                </div>
+              </details>
             </div>
           ) : (
             "Loading…"
