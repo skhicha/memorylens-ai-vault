@@ -17,4 +17,10 @@ if [ ! -f ".env" ]; then
 fi
 
 echo "Starting MemoryLens AI backend on http://localhost:8000 ..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# --reload-dir app restricts the file-watcher to source code only --
+# without it, uvicorn watches the whole backend/ folder including venv/
+# (many thousands of files for faster-whisper/opencv/etc.), which makes
+# the watcher's startup scan slow and can trigger spurious reload/restart
+# cycles whenever a package is installed or updated, briefly dropping
+# in-flight requests while the server process restarts.
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
