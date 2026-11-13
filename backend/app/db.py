@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 );
 CREATE INDEX IF NOT EXISTS idx_otp_codes_user ON otp_codes(user_id);
 
+-- One-time recovery codes for authenticator-app MFA, generated once when
+-- MFA is enabled and shown to the user a single time.
+CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mfa_backup_codes_user ON mfa_backup_codes(user_id);
+
 CREATE TABLE IF NOT EXISTS media (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
@@ -129,6 +140,17 @@ USER_COLUMN_MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN otp_enabled INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'",
     "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1",
+    # Google SSO: nullable, set only for accounts created/linked via
+    # "Sign in with Google". A password_hash still exists for these rows
+    # (a random, never-typeable value) since the column is NOT NULL --
+    # such an account simply can't log in with a password unless it later
+    # goes through the normal forgot-password flow to set a real one.
+    "ALTER TABLE users ADD COLUMN google_sub TEXT",
+    # Real authenticator-app MFA (TOTP, RFC 6238) -- separate from and in
+    # addition to the simpler email-OTP login. totp_secret is only set
+    # once setup is confirmed; mfa_enabled gates whether login requires it.
+    "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+    "ALTER TABLE users ADD COLUMN mfa_enabled INTEGER DEFAULT 0",
 ]
 
 MEDIA_COLUMN_MIGRATIONS = [
@@ -143,6 +165,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError as exc:
             if "duplicate column" not in str(exc).lower():
                 raise
+    # Run after the ALTER TABLEs above since google_sub doesn't exist until
+    # then on a pre-existing database. SQLite unique indexes allow any
+    # number of NULLs, so plain members (google_sub IS NULL) are unaffected.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)")
     conn.commit()
 
 

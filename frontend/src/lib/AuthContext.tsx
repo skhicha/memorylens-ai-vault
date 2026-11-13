@@ -1,11 +1,23 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, getAccessToken, isOtpRequired, setAccessToken, setRefreshHandler, type AuthUser } from "./api";
+import {
+  api,
+  getAccessToken,
+  isMfaRequired,
+  isOtpRequired,
+  setAccessToken,
+  setRefreshHandler,
+  type AuthUser,
+} from "./api";
 
 const STORAGE_KEY = "memorylens_access_token";
 
-// Discriminated login result: either login completed, or the account needs
-// an OTP code. The Login page drives the OTP UI off this, not AuthContext.
-export type LoginOutcome = { status: "logged_in" } | { status: "otp_required"; otpToken: string };
+// Discriminated login result: login completed, or the account needs an
+// OTP code (email), or an MFA code (authenticator app). The Login page
+// drives the relevant UI off this, not AuthContext.
+export type LoginOutcome =
+  | { status: "logged_in" }
+  | { status: "otp_required"; otpToken: string }
+  | { status: "mfa_required"; mfaToken: string };
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -13,6 +25,8 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<LoginOutcome>;
   completeOtpLogin: (otpToken: string, code: string) => Promise<void>;
   resendOtp: (otpToken: string) => Promise<void>;
+  completeMfaLogin: (mfaToken: string, code: string) => Promise<void>;
+  completeOAuthLogin: (accessToken: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -65,6 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<LoginOutcome> => {
     const res = await api.login(email, password);
+    if (isMfaRequired(res)) {
+      return { status: "mfa_required", mfaToken: res.mfa_token };
+    }
     if (isOtpRequired(res)) {
       return { status: "otp_required", otpToken: res.otp_token };
     }
@@ -83,6 +100,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resendOtp = async (otpToken: string) => {
     await api.otpResend(otpToken);
+  };
+
+  const completeMfaLogin = async (mfaToken: string, code: string) => {
+    const res = await api.mfaVerify(mfaToken, code);
+    setAccessToken(res.access_token);
+    localStorage.setItem(STORAGE_KEY, res.access_token);
+    setUser(res.user);
+  };
+
+  // Used by the Google OAuth callback page: the backend redirect only
+  // carries the access token (the refresh token already arrived as an
+  // httpOnly cookie on that same redirect), so this just adopts it and
+  // fetches the user profile, mirroring what AuthResponse normally gives.
+  const completeOAuthLogin = async (accessToken: string) => {
+    setAccessToken(accessToken);
+    localStorage.setItem(STORAGE_KEY, accessToken);
+    const fresh = await api.me();
+    setUser(fresh);
   };
 
   const refreshUser = async () => {
@@ -110,7 +145,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, completeOtpLogin, resendOtp, register, logout, refreshUser }}
+      value={{
+        user,
+        loading,
+        login,
+        completeOtpLogin,
+        resendOtp,
+        completeMfaLogin,
+        completeOAuthLogin,
+        register,
+        logout,
+        refreshUser,
+      }}
     >
       {children}
     </AuthContext.Provider>

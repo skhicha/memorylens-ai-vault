@@ -153,6 +153,7 @@ export interface AuthUser {
   role: "admin" | "member";
   email_verified: boolean;
   otp_enabled: boolean;
+  mfa_enabled: boolean;
 }
 
 export interface AuthResponse {
@@ -166,12 +167,35 @@ export interface OtpRequiredResponse {
   otp_token: string;
 }
 
-// Login returns either full tokens, or (when the account has OTP enabled)
-// a short-lived otp_token the caller must exchange via otpVerify.
-export type LoginResult = AuthResponse | OtpRequiredResponse;
+export interface MfaRequiredResponse {
+  mfa_required: true;
+  mfa_token: string;
+}
+
+// Login returns full tokens, or (when the account has OTP or MFA enabled)
+// a short-lived token the caller must exchange via otpVerify/mfaVerify.
+export type LoginResult = AuthResponse | OtpRequiredResponse | MfaRequiredResponse;
 
 export function isOtpRequired(res: LoginResult): res is OtpRequiredResponse {
   return (res as OtpRequiredResponse).otp_required === true;
+}
+
+export function isMfaRequired(res: LoginResult): res is MfaRequiredResponse {
+  return (res as MfaRequiredResponse).mfa_required === true;
+}
+
+export interface MfaSetupResponse {
+  secret: string;
+  otpauth_uri: string;
+  qr_code: string;
+}
+
+export interface MfaEnableResponse {
+  backup_codes: string[];
+}
+
+export interface GoogleStatus {
+  configured: boolean;
 }
 
 export interface AdminUser {
@@ -258,6 +282,38 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ otp_enabled }),
     });
+  },
+
+  mfaSetup() {
+    return request<MfaSetupResponse>(`/api/auth/mfa/setup`, { method: "POST" });
+  },
+
+  mfaEnable(code: string) {
+    return request<MfaEnableResponse>(`/api/auth/mfa/enable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  mfaDisable(password: string) {
+    return request<{ ok: boolean }>(`/api/auth/mfa/disable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  mfaVerify(mfa_token: string, code: string) {
+    return request<AuthResponse>(`/api/auth/mfa/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mfa_token, code }),
+    });
+  },
+
+  googleStatus() {
+    return request<GoogleStatus>(`/api/auth/google/status`);
   },
 
   refresh() {

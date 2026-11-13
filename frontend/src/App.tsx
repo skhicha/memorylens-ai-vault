@@ -8,6 +8,7 @@ import { useAuth } from "./lib/AuthContext";
 import { LoginPage } from "./pages/Login";
 import { RegisterPage } from "./pages/Register";
 import { ForgotPasswordPage } from "./pages/ForgotPassword";
+import { OAuthCallbackPage } from "./pages/OAuthCallback";
 import { UploadPage } from "./pages/Upload";
 import { LibraryPage } from "./pages/Library";
 import { MediaDetailPage } from "./pages/MediaDetail";
@@ -19,7 +20,7 @@ import { DashboardPage } from "./pages/Dashboard";
 import { SettingsPage } from "./pages/Settings";
 import { AdminPage } from "./pages/Admin";
 
-const AUTH_ROUTES = ["/login", "/register", "/forgot-password"];
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/oauth/callback"];
 
 function AppShell() {
   const { user } = useAuth();
@@ -36,6 +37,7 @@ function AppShell() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
           <Route path="/" element={<Navigate to="/library" replace />} />
           <Route
             path="/upload"

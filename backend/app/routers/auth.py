@@ -1,8 +1,11 @@
+import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -10,6 +13,8 @@ from slowapi.util import get_remote_address
 from app.auth import (
     CurrentUser,
     create_access_token,
+    create_mfa_token,
+    create_oauth_state_token,
     create_otp_token,
     create_refresh_token,
     decode_token,
@@ -20,10 +25,12 @@ from app.auth import (
     verify_password,
 )
 from app.db import db_cursor
-from app.services import mailer, otp
+from app.services import mailer, mfa, oauth_google, otp
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
+
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days, matches auth.REFRESH_TOKEN_DAYS
@@ -116,6 +123,35 @@ class UserOut(BaseModel):
     role: str = "member"
     email_verified: bool = False
     otp_enabled: bool = False
+    mfa_enabled: bool = False
+
+
+def _user_out(row_or_user) -> "UserOut":
+    """Builds UserOut from either a sqlite3.Row (has dict-style access to
+    all selected columns) or an app.auth.CurrentUser -- every call site
+    below was duplicating these six fields, which is exactly how the
+    earlier mfa_enabled field would've been forgotten on one of them."""
+    get = row_or_user.__getitem__ if hasattr(row_or_user, "keys") else None
+    if get:
+        return UserOut(
+            id=row_or_user["id"],
+            email=row_or_user["email"],
+            display_name=row_or_user["display_name"],
+            role=row_or_user["role"] or "member",
+            email_verified=bool(row_or_user["email_verified"]),
+            otp_enabled=bool(row_or_user["otp_enabled"]),
+            mfa_enabled=bool(row_or_user["mfa_enabled"]),
+        )
+    u = row_or_user
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        display_name=u.display_name,
+        role=u.role,
+        email_verified=u.email_verified,
+        otp_enabled=u.otp_enabled,
+        mfa_enabled=u.mfa_enabled,
+    )
 
 
 class AuthResponse(BaseModel):
@@ -136,6 +172,34 @@ class OtpVerifyRequest(BaseModel):
 
 class OtpResendRequest(BaseModel):
     otp_token: str
+
+
+class MfaRequiredResponse(BaseModel):
+    mfa_required: bool = True
+    mfa_token: str
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_token: str
+    code: str
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+    qr_code: str  # data: URI PNG, drop straight into an <img src>
+
+
+class MfaEnableRequest(BaseModel):
+    code: str
+
+
+class MfaEnableResponse(BaseModel):
+    backup_codes: list[str]
+
+
+class MfaDisableRequest(BaseModel):
+    password: str
 
 
 class VerifyEmailRequest(BaseModel):
@@ -161,6 +225,10 @@ class ResetPasswordRequest(BaseModel):
 
 class UpdateMeRequest(BaseModel):
     otp_enabled: bool
+
+
+class GoogleStatusResponse(BaseModel):
+    configured: bool
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -213,7 +281,7 @@ def register(req: RegisterRequest, request: Request, response: Response) -> Auth
 def login(req: LoginRequest, request: Request, response: Response):
     with db_cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, display_name, otp_enabled, is_active, role, email_verified "
+            "SELECT id, email, password_hash, display_name, otp_enabled, mfa_enabled, is_active, role, email_verified "
             "FROM users WHERE email = ?",
             (req.email,),
         )
@@ -223,6 +291,12 @@ def login(req: LoginRequest, request: Request, response: Response):
 
     if not row["is_active"]:
         raise HTTPException(403, "Your account has been deactivated. Contact an administrator.")
+
+    # MFA (authenticator app) takes priority over the simpler email-OTP
+    # step when both are enabled -- it's the stronger factor, and stacking
+    # both on one login would be unusual UX for a capstone demo.
+    if row["mfa_enabled"]:
+        return MfaRequiredResponse(mfa_token=create_mfa_token(row["id"]))
 
     if row["otp_enabled"]:
         code = _issue_otp_code(row["id"], "login", OTP_LOGIN_EXPIRE_MINUTES)
@@ -237,17 +311,7 @@ def login(req: LoginRequest, request: Request, response: Response):
     access = create_access_token(row["id"])
     refresh = create_refresh_token(row["id"])
     _set_refresh_cookie(response, refresh)
-    return AuthResponse(
-        access_token=access,
-        user=UserOut(
-            id=row["id"],
-            email=row["email"],
-            display_name=row["display_name"],
-            role=row["role"] or "member",
-            email_verified=bool(row["email_verified"]),
-            otp_enabled=bool(row["otp_enabled"]),
-        ),
-    )
+    return AuthResponse(access_token=access, user=_user_out(row))
 
 
 @router.post("/refresh", response_model=AuthResponse)
@@ -258,17 +322,7 @@ def refresh(response: Response, user_id: str = Depends(get_refresh_user_id)) -> 
     access = create_access_token(user.id)
     new_refresh = create_refresh_token(user.id)
     _set_refresh_cookie(response, new_refresh)
-    return AuthResponse(
-        access_token=access,
-        user=UserOut(
-            id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            role=user.role,
-            email_verified=user.email_verified,
-            otp_enabled=user.otp_enabled,
-        ),
-    )
+    return AuthResponse(access_token=access, user=_user_out(user))
 
 
 @router.post("/logout")
@@ -279,14 +333,7 @@ def logout(response: Response) -> dict:
 
 @router.get("/me", response_model=UserOut)
 def me(current_user: CurrentUser = Depends(get_current_user)) -> UserOut:
-    return UserOut(
-        id=current_user.id,
-        email=current_user.email,
-        display_name=current_user.display_name,
-        role=current_user.role,
-        email_verified=current_user.email_verified,
-        otp_enabled=current_user.otp_enabled,
-    )
+    return _user_out(current_user)
 
 
 @router.patch("/me", response_model=UserOut)
@@ -296,14 +343,8 @@ def update_me(req: UpdateMeRequest, current_user: CurrentUser = Depends(get_curr
             "UPDATE users SET otp_enabled = ? WHERE id = ?",
             (1 if req.otp_enabled else 0, current_user.id),
         )
-    return UserOut(
-        id=current_user.id,
-        email=current_user.email,
-        display_name=current_user.display_name,
-        role=current_user.role,
-        email_verified=current_user.email_verified,
-        otp_enabled=req.otp_enabled,
-    )
+    current_user.otp_enabled = req.otp_enabled
+    return _user_out(current_user)
 
 
 @router.post("/otp/verify", response_model=AuthResponse)
@@ -321,14 +362,7 @@ def otp_verify(req: OtpVerifyRequest, request: Request, response: Response) -> A
     _set_refresh_cookie(response, refresh)
     return AuthResponse(
         access_token=access,
-        user=UserOut(
-            id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            role=user.role,
-            email_verified=user.email_verified,
-            otp_enabled=user.otp_enabled,
-        ),
+        user=_user_out(user),
     )
 
 
@@ -353,6 +387,90 @@ def otp_resend(req: OtpResendRequest, request: Request) -> dict:
         f"Your one-time code is {code}. It expires in {OTP_LOGIN_EXPIRE_MINUTES} minutes.",
     )
     return {"ok": True}
+
+
+@router.post("/mfa/setup", response_model=MfaSetupResponse)
+def mfa_setup(current_user: CurrentUser = Depends(get_current_user)) -> MfaSetupResponse:
+    # Generates a fresh secret every call (re-running setup before
+    # confirming just replaces the pending secret -- nothing is "enabled"
+    # until /mfa/enable verifies a real code against it).
+    secret = mfa.generate_secret()
+    with db_cursor() as cur:
+        cur.execute("UPDATE users SET totp_secret = ? WHERE id = ?", (secret, current_user.id))
+    uri = mfa.provisioning_uri(secret, current_user.email)
+    return MfaSetupResponse(secret=secret, otpauth_uri=uri, qr_code=mfa.qr_code_data_uri(uri))
+
+
+@router.post("/mfa/enable", response_model=MfaEnableResponse)
+def mfa_enable(req: MfaEnableRequest, current_user: CurrentUser = Depends(get_current_user)) -> MfaEnableResponse:
+    with db_cursor() as cur:
+        cur.execute("SELECT totp_secret FROM users WHERE id = ?", (current_user.id,))
+        row = cur.fetchone()
+    if not row or not row["totp_secret"]:
+        raise HTTPException(400, "Call /mfa/setup first to get a code to scan")
+    if not mfa.verify_totp(row["totp_secret"], req.code):
+        raise HTTPException(401, "Invalid code")
+
+    backup_codes = mfa.generate_backup_codes()
+    with db_cursor() as cur:
+        cur.execute("UPDATE users SET mfa_enabled = 1 WHERE id = ?", (current_user.id,))
+        cur.execute("DELETE FROM mfa_backup_codes WHERE user_id = ?", (current_user.id,))
+        cur.executemany(
+            "INSERT INTO mfa_backup_codes (user_id, code_hash) VALUES (?, ?)",
+            [(current_user.id, mfa.hash_backup_code(c)) for c in backup_codes],
+        )
+    return MfaEnableResponse(backup_codes=backup_codes)
+
+
+@router.post("/mfa/disable")
+def mfa_disable(req: MfaDisableRequest, current_user: CurrentUser = Depends(get_current_user)) -> dict:
+    with db_cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = ?", (current_user.id,))
+        row = cur.fetchone()
+    if not row or not verify_password(req.password, row["password_hash"]):
+        raise HTTPException(401, "Incorrect password")
+    with db_cursor() as cur:
+        cur.execute(
+            "UPDATE users SET mfa_enabled = 0, totp_secret = NULL WHERE id = ?",
+            (current_user.id,),
+        )
+        cur.execute("DELETE FROM mfa_backup_codes WHERE user_id = ?", (current_user.id,))
+    return {"ok": True}
+
+
+@router.post("/mfa/verify", response_model=AuthResponse)
+@limiter.limit("10/minute")
+def mfa_verify(req: MfaVerifyRequest, request: Request, response: Response) -> AuthResponse:
+    user_id = decode_token(req.mfa_token, "mfa")
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(401, "User not found")
+
+    with db_cursor() as cur:
+        cur.execute("SELECT totp_secret FROM users WHERE id = ?", (user_id,))
+        secret_row = cur.fetchone()
+    secret = secret_row["totp_secret"] if secret_row else None
+
+    ok = bool(secret) and mfa.verify_totp(secret, req.code)
+    if not ok:
+        # Fall back to a one-time backup code if the TOTP code didn't match.
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT id, code_hash FROM mfa_backup_codes WHERE user_id = ? AND used = 0",
+                (user_id,),
+            )
+            for backup_row in cur.fetchall():
+                if mfa.verify_backup_code(req.code, backup_row["code_hash"]):
+                    cur.execute("UPDATE mfa_backup_codes SET used = 1 WHERE id = ?", (backup_row["id"],))
+                    ok = True
+                    break
+    if not ok:
+        raise HTTPException(401, "Invalid code")
+
+    access = create_access_token(user.id)
+    refresh = create_refresh_token(user.id)
+    _set_refresh_cookie(response, refresh)
+    return AuthResponse(access_token=access, user=_user_out(user))
 
 
 @router.post("/verify-email")
@@ -410,3 +528,78 @@ def reset_password(req: ResetPasswordRequest, request: Request) -> dict:
     # list in this codebase, so existing sessions can't be invalidated here;
     # they simply expire on their normal schedule (see app/auth.py).
     return {"ok": True}
+
+
+@router.get("/google/status", response_model=GoogleStatusResponse)
+def google_status() -> GoogleStatusResponse:
+    return GoogleStatusResponse(configured=oauth_google.is_configured())
+
+
+@router.get("/google/login")
+def google_login():
+    if not oauth_google.is_configured():
+        # Honest, non-broken fallback: no Google Cloud credentials set up in
+        # this environment. Send the user back to Login with a flag it can
+        # show a clear message for, rather than erroring the redirect.
+        return RedirectResponse(f"{FRONTEND_URL}/login?google_error=not_configured")
+    state = create_oauth_state_token()
+    return RedirectResponse(oauth_google.build_auth_url(state))
+
+
+@router.get("/google/callback")
+def google_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    if error or not code or not state:
+        return RedirectResponse(f"{FRONTEND_URL}/login?google_error=denied")
+
+    try:
+        decode_token(state, "oauth_state")
+    except HTTPException:
+        return RedirectResponse(f"{FRONTEND_URL}/login?google_error=invalid_state")
+
+    try:
+        google_access_token = oauth_google.exchange_code(code)
+        info = oauth_google.fetch_userinfo(google_access_token)
+    except Exception:  # noqa: BLE001 - any Google-side failure degrades to an honest error, never a 500
+        return RedirectResponse(f"{FRONTEND_URL}/login?google_error=google_failed")
+
+    email = info.get("email")
+    if not email:
+        return RedirectResponse(f"{FRONTEND_URL}/login?google_error=no_email")
+    google_sub = info.get("sub")
+    display_name = info.get("name") or email.split("@")[0]
+
+    with db_cursor() as cur:
+        cur.execute("SELECT id, is_active FROM users WHERE google_sub = ? OR email = ?", (google_sub, email))
+        row = cur.fetchone()
+        if row:
+            user_id = row["id"]
+            if not row["is_active"]:
+                return RedirectResponse(f"{FRONTEND_URL}/login?google_error=deactivated")
+            # Links a pre-existing password account to this Google identity
+            # the first time it's used, and confirms the email since Google
+            # already verified it on its end.
+            cur.execute(
+                "UPDATE users SET google_sub = ?, email_verified = 1 WHERE id = ?",
+                (google_sub, user_id),
+            )
+        else:
+            user_id = uuid.uuid4().hex
+            cur.execute("SELECT COUNT(*) AS n FROM users")
+            is_first_user = cur.fetchone()["n"] == 0
+            role = "admin" if is_first_user else "member"
+            # No password is ever set by the user for a Google-only account;
+            # password_hash is NOT NULL, so a random, never-typeable value
+            # fills it -- a plain password login is simply impossible for
+            # this account unless its owner later sets one via "forgot
+            # password", which still works normally.
+            cur.execute(
+                "INSERT INTO users (id, email, password_hash, display_name, role, google_sub, email_verified) "
+                "VALUES (?, ?, ?, ?, ?, ?, 1)",
+                (user_id, email, hash_password(uuid.uuid4().hex), display_name, role, google_sub),
+            )
+
+    access = create_access_token(user_id)
+    refresh = create_refresh_token(user_id)
+    redirect = RedirectResponse(f"{FRONTEND_URL}/oauth/callback?token={access}")
+    _set_refresh_cookie(redirect, refresh)
+    return redirect

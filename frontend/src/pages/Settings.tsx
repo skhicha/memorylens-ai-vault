@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { RefreshCw, ShieldCheck, Sparkles, KeyRound } from "lucide-react";
 import { api, type SettingsInfo } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { ThemeToggle } from "../components/ThemeToggle";
+
+type MfaStep = "idle" | "setup" | "backup-codes";
 
 export function SettingsPage() {
   const { user, refreshUser } = useAuth();
@@ -13,6 +15,19 @@ export function SettingsPage() {
   const [otpMsg, setOtpMsg] = useState<string | null>(null);
   const [verifySending, setVerifySending] = useState(false);
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+
+  // --- Authenticator-app MFA (TOTP) setup/disable state ---
+  const [mfaStep, setMfaStep] = useState<MfaStep>("idle");
+  const [mfaQr, setMfaQr] = useState<string | null>(null);
+  const [mfaSecret, setMfaSecret] = useState<string | null>(null);
+  const [mfaConfirmCode, setMfaConfirmCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [mfaError, setMfaError] = useState<string | null>(null);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [showDisableForm, setShowDisableForm] = useState(false);
 
   useEffect(() => {
     api.settings().then(setSettings);
@@ -37,11 +52,79 @@ export function SettingsPage() {
     setVerifyMsg(null);
     try {
       await api.resendVerification();
-      setVerifyMsg("Verification email sent — check your inbox.");
+      setVerifyMsg("Verification email sent — check your inbox (or the backend's terminal log if SMTP isn't configured).");
     } catch (err) {
       setVerifyMsg((err as Error).message.replace(/^\d+\s*/, "") || "Could not send verification email");
     } finally {
       setVerifySending(false);
+    }
+  };
+
+  const submitVerifyCode = async () => {
+    setVerifying(true);
+    setVerifyMsg(null);
+    try {
+      await api.verifyEmail(verifyCode);
+      setVerifyCode("");
+      await refreshUser();
+      setVerifyMsg("Email verified.");
+    } catch (err) {
+      setVerifyMsg((err as Error).message.replace(/^\d+\s*/, "") || "Invalid or expired code");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const startMfaSetup = async () => {
+    setMfaError(null);
+    setMfaBusy(true);
+    try {
+      const res = await api.mfaSetup();
+      setMfaQr(res.qr_code);
+      setMfaSecret(res.secret);
+      setMfaStep("setup");
+    } catch (err) {
+      setMfaError((err as Error).message.replace(/^\d+\s*/, "") || "Could not start MFA setup");
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
+  const confirmMfaEnable = async () => {
+    setMfaError(null);
+    setMfaBusy(true);
+    try {
+      const res = await api.mfaEnable(mfaConfirmCode);
+      setBackupCodes(res.backup_codes);
+      setMfaStep("backup-codes");
+      setMfaConfirmCode("");
+      await refreshUser();
+    } catch (err) {
+      setMfaError((err as Error).message.replace(/^\d+\s*/, "") || "Invalid code — check your authenticator app and try again");
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
+  const finishMfaSetup = () => {
+    setMfaStep("idle");
+    setMfaQr(null);
+    setMfaSecret(null);
+    setBackupCodes([]);
+  };
+
+  const disableMfa = async () => {
+    setMfaError(null);
+    setMfaBusy(true);
+    try {
+      await api.mfaDisable(disablePassword);
+      setDisablePassword("");
+      setShowDisableForm(false);
+      await refreshUser();
+    } catch (err) {
+      setMfaError((err as Error).message.replace(/^\d+\s*/, "") || "Incorrect password");
+    } finally {
+      setMfaBusy(false);
     }
   };
 
@@ -131,6 +214,20 @@ export function SettingsPage() {
                 </button>
               )}
             </div>
+            {!user?.email_verified && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input
+                  type="text"
+                  placeholder="Enter verification code"
+                  value={verifyCode}
+                  onChange={(e) => setVerifyCode(e.target.value.trim())}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn btn-primary" onClick={submitVerifyCode} disabled={verifying || verifyCode.length < 4}>
+                  {verifying ? "Verifying…" : "Verify"}
+                </button>
+              </div>
+            )}
             {verifyMsg && <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 10 }}>{verifyMsg}</div>}
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -146,6 +243,123 @@ export function SettingsPage() {
             </div>
             {otpMsg && <div style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{otpMsg}</div>}
           </div>
+        </div>
+
+        <div className="glass-card" style={{ padding: 20 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-muted)", textTransform: "uppercase" }}>
+            <KeyRound size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
+            Two-factor authentication (authenticator app)
+          </h3>
+
+          {mfaStep === "idle" && (
+            <div style={{ fontSize: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div>
+                    Status:{" "}
+                    {user?.mfa_enabled ? (
+                      <span style={{ color: "var(--success)" }}>Enabled</span>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>Disabled</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 4 }}>
+                    Scan a QR code with Google Authenticator, Authy, or 1Password — the real, offline-capable kind
+                    of MFA, separate from the email OTP above.
+                  </div>
+                </div>
+                {user?.mfa_enabled ? (
+                  <button className="btn" onClick={() => setShowDisableForm((v) => !v)}>
+                    Disable
+                  </button>
+                ) : (
+                  <button className="btn btn-primary" onClick={startMfaSetup} disabled={mfaBusy}>
+                    {mfaBusy ? "Starting…" : "Set up"}
+                  </button>
+                )}
+              </div>
+
+              {showDisableForm && (
+                <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+                  <input
+                    type="password"
+                    placeholder="Confirm your password"
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button className="btn" onClick={disableMfa} disabled={mfaBusy || !disablePassword}>
+                    {mfaBusy ? "Disabling…" : "Confirm disable"}
+                  </button>
+                </div>
+              )}
+              {mfaError && <div style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{mfaError}</div>}
+            </div>
+          )}
+
+          {mfaStep === "setup" && mfaQr && (
+            <div style={{ fontSize: 14 }}>
+              <p style={{ marginTop: 0, color: "var(--text-muted)", fontSize: 13 }}>
+                Scan this QR code with your authenticator app, then enter the 6-digit code it shows to confirm.
+              </p>
+              <img
+                src={mfaQr}
+                alt="MFA setup QR code"
+                style={{ width: 180, height: 180, borderRadius: 8, background: "#fff", padding: 8 }}
+              />
+              <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                Can't scan it? Enter this key manually: <code style={{ userSelect: "all" }}>{mfaSecret}</code>
+              </p>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <input
+                  type="text"
+                  placeholder="6-digit code"
+                  value={mfaConfirmCode}
+                  onChange={(e) => setMfaConfirmCode(e.target.value.replace(/\D/g, ""))}
+                  maxLength={6}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn btn-primary" onClick={confirmMfaEnable} disabled={mfaBusy || mfaConfirmCode.length < 6}>
+                  {mfaBusy ? "Confirming…" : "Confirm"}
+                </button>
+                <button className="btn" onClick={finishMfaSetup}>
+                  Cancel
+                </button>
+              </div>
+              {mfaError && <div style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{mfaError}</div>}
+            </div>
+          )}
+
+          {mfaStep === "backup-codes" && (
+            <div style={{ fontSize: 14 }}>
+              <p style={{ marginTop: 0, color: "var(--success)", fontWeight: 600 }}>
+                Two-factor authentication is now enabled.
+              </p>
+              <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                Save these one-time backup codes somewhere safe — each one can be used instead of your
+                authenticator app if you lose access to it. They're shown only once.
+              </p>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 8,
+                  fontFamily: "monospace",
+                  fontSize: 14,
+                  background: "var(--surface)",
+                  padding: 14,
+                  borderRadius: 8,
+                }}
+              >
+                {backupCodes.map((c) => (
+                  <div key={c}>{c}</div>
+                ))}
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={finishMfaSetup}>
+                Done — I've saved these
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="glass-card" style={{ padding: 20 }}>

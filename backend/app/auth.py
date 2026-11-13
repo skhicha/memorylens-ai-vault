@@ -19,6 +19,7 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60
 REFRESH_TOKEN_DAYS = 7
 OTP_TOKEN_MINUTES = 5
+OAUTH_STATE_MINUTES = 10
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -54,6 +55,21 @@ def create_otp_token(user_id: str) -> str:
     return _create_token(user_id, "otp", timedelta(minutes=OTP_TOKEN_MINUTES))
 
 
+def create_mfa_token(user_id: str) -> str:
+    # Same shape as create_otp_token but a distinct "mfa" type so it can
+    # only ever be used against /api/auth/mfa/verify, never the email-OTP
+    # verify endpoint, even though both are short-lived pending-login tokens.
+    return _create_token(user_id, "mfa", timedelta(minutes=OTP_TOKEN_MINUTES))
+
+
+def create_oauth_state_token() -> str:
+    # CSRF protection for the Google OAuth redirect: a self-contained,
+    # short-lived signed token used as the `state` param instead of a
+    # server-side session store (this codebase has none) -- its signature
+    # and expiry are all that's checked on the callback, no payload needed.
+    return _create_token("google-oauth", "oauth_state", timedelta(minutes=OAUTH_STATE_MINUTES))
+
+
 def decode_token(token: str, expected_type: str) -> str:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -76,6 +92,7 @@ class CurrentUser:
         role: str = "member",
         email_verified: bool = False,
         otp_enabled: bool = False,
+        mfa_enabled: bool = False,
     ):
         self.id = id
         self.email = email
@@ -83,12 +100,13 @@ class CurrentUser:
         self.role = role
         self.email_verified = email_verified
         self.otp_enabled = otp_enabled
+        self.mfa_enabled = mfa_enabled
 
 
 def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
     with db_cursor() as cur:
         cur.execute(
-            "SELECT id, email, display_name, role, email_verified, otp_enabled FROM users WHERE id = ?",
+            "SELECT id, email, display_name, role, email_verified, otp_enabled, mfa_enabled FROM users WHERE id = ?",
             (user_id,),
         )
         row = cur.fetchone()
@@ -101,6 +119,7 @@ def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
         role=row["role"] or "member",
         email_verified=bool(row["email_verified"]),
         otp_enabled=bool(row["otp_enabled"]),
+        mfa_enabled=bool(row["mfa_enabled"]),
     )
 
 
