@@ -1,13 +1,26 @@
 :root {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 22px;
   --accent: #7c6cff;
+  --accent-rgb: 124, 108, 255;
   --accent-2: #4fd1c5;
   --success: #3ddc97;
   --warn: #f0b429;
   --danger: #ff6b6b;
+
+  /* Spacing scale: every margin/padding/gap in the app traces back to one
+     of these instead of a scattered magic-number px value. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
 }
 
 :root[data-theme="dark"] {
@@ -64,13 +77,36 @@ button {
   font-family: inherit;
 }
 
+h1, h2, h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: rgba(var(--accent-rgb), 0.35);
+  color: var(--text);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
   background: var(--surface-strong);
   border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-border);
+}
+
+:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .app-shell {
@@ -81,7 +117,7 @@ button {
 .app-main {
   flex: 1;
   min-width: 0;
-  padding: 28px 32px 60px;
+  padding: var(--sp-6) var(--sp-6) var(--sp-7);
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -94,28 +130,30 @@ button {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: var(--shadow);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .page-header {
-  margin-bottom: 28px;
+  margin-bottom: var(--sp-6);
 }
 
 .page-header h1 {
-  font-size: 28px;
-  margin: 0 0 6px;
-  letter-spacing: -0.02em;
+  font-size: 30px;
+  margin: 0 0 var(--sp-2);
+  letter-spacing: -0.015em;
 }
 
 .page-header p {
   color: var(--text-muted);
   margin: 0;
   font-size: 14.5px;
+  max-width: 60ch;
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   padding: 10px 18px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--surface-border);
@@ -124,11 +162,12 @@ button {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .btn:hover {
   background: var(--surface);
+  border-color: rgba(var(--accent-rgb), 0.35);
   transform: translateY(-1px);
 }
 
@@ -141,6 +180,7 @@ button {
 
 .btn-primary:hover {
   filter: brightness(1.08);
+  box-shadow: 0 10px 28px rgba(124, 108, 255, 0.45);
 }
 
 .btn-danger {
@@ -219,7 +259,11 @@ select:focus {
 
 .grid {
   display: grid;
-  gap: 18px;
+  gap: var(--sp-5);
+}
+
+.stat-number {
+  font-variant-numeric: tabular-nums;
 }
 
 .grid-cards {

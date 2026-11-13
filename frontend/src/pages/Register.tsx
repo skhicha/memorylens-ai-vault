@@ -19,7 +19,7 @@ export function RegisterPage() {
     setSubmitting(true);
     try {
       await register(email, password, displayName);
-      navigate("/library", { replace: true });
+      navigate("/library", { replace: true, state: { justRegisteredEmail: email } });
     } catch (err) {
       setError((err as Error).message.replace(/^\d+\s*/, "") || "Registration failed");
     } finally {

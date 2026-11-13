@@ -9,6 +9,11 @@
   font-size: 13.5px;
 }
 
+.verify-banner-success {
+  background: rgba(61, 220, 151, 0.14);
+  border-bottom: 1px solid rgba(61, 220, 151, 0.3);
+}
+
 .verify-banner-action {
   margin-left: auto;
   background: none;

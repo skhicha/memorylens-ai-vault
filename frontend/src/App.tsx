@@ -3,6 +3,7 @@ import { Navbar } from "./components/Navbar";
 import { CommandPalette } from "./components/CommandPalette";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { VerifyEmailBanner } from "./components/VerifyEmailBanner";
+import { JustRegisteredToast } from "./components/JustRegisteredToast";
 import { AuthProvider } from "./lib/AuthContext";
 import { useAuth } from "./lib/AuthContext";
 import { LoginPage } from "./pages/Login";
@@ -32,6 +33,7 @@ function AppShell() {
       {showShell && <Navbar />}
       {showShell && <CommandPalette />}
       <main className={isAuthRoute ? "app-main app-main-auth" : "app-main"}>
+        {showShell && <JustRegisteredToast />}
         {showShell && <VerifyEmailBanner />}
         <Routes>
           <Route path="/login" element={<LoginPage />} />
