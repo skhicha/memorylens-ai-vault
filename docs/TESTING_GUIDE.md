@@ -56,6 +56,12 @@ you start, so you're not hunting for files mid-demo.
 
 Do this once before the actual demo so you're not typing a password live.
 
+**The very first account ever created on a fresh install automatically
+becomes the admin account** (you'll see an "Admin" link in the sidebar).
+Every account after that is a regular member. If you want a second,
+non-admin account to demo data isolation, just register again with a
+different email afterward.
+
 ---
 
 ## 1. Functional test pass (do this yourself first, before showing anyone)
@@ -83,6 +89,13 @@ that's a real bug — fix it before presenting.
       grid should update instantly.
 - [ ] Use the **tag** filter to pick a tag you know one item has — only
       matching items should remain.
+- [ ] Click the star icon on a card to favorite it, then click the
+      **Favorites** button — only favorited items should remain; click it
+      again to show everything.
+- [ ] Click **Select**, tick 2 cards, confirm the toolbar shows
+      "2 selected", then click **Delete selected** and confirm the dialog —
+      both items should disappear. (Only test this on throwaway items —
+      it's permanent, same as a single delete.)
 
 ### Media detail
 
@@ -127,6 +140,13 @@ that's a real bug — fix it before presenting.
       answer. Click a citation chip — it should jump to that media item.
 - [ ] Ask something nonsensical ("find my dinosaur videos") — it should
       honestly say it found nothing, not invent an answer.
+- [ ] Known limitation, not a bug: in offline/mock mode Ask AI is backed
+      by literal keyword search, not true language understanding — a
+      paraphrase like "any videos with people talking?" can come back
+      empty even when a matching video exists, because none of those exact
+      words appear in your tags/transcript. Prefer words you know are
+      actually in your transcript or tags when demoing this live, or
+      mention it as an honest, disclosed limitation if asked.
 
 ### Dashboard
 
@@ -145,6 +165,12 @@ that's a real bug — fix it before presenting.
       switches cleanly between dark and light with no unreadable text or
       broken layout.
 
+### Command palette
+
+- [ ] Press **Cmd/Ctrl+K** from anywhere in the app. A quick-navigation
+      palette should pop up — type a page name (e.g. "dashboard") and
+      press Enter to jump there, or type free text and it routes to Search.
+
 ### Auth / security (do this to be ready for "is it actually secure?")
 
 - [ ] Click your avatar's **logout** icon. You should be bounced to
@@ -160,6 +186,46 @@ that's a real bug — fix it before presenting.
       normally with "incorrect password"; after ~5 attempts within a
       minute you should get a **429 "too many requests"**-style error
       instead, proving the login endpoint is rate-limited.
+
+### Email OTP login, verification & password reset
+
+- [ ] Go to **Settings → Security** and click **Enable** next to "Require
+      a login code (OTP)". Log out, then log back in with the correct
+      password — instead of landing in the app, you should see an
+      "Enter your code" screen. Since no real email server is configured
+      by default, the actual 6-digit code is printed to the **backend
+      terminal**, prefixed `[DEV MODE — email not sent, SMTP not
+      configured]` — copy it from there. Enter a wrong code first (should
+      cleanly say "Invalid or expired code"), then the real one (should
+      log you in). The "Resend code" link has a 30-second cooldown.
+- [ ] Notice the **"Please verify your email address"** banner at the top
+      of the app. Click **Resend verification email**, check the backend
+      terminal for the new code, then (from Settings) confirm verifying
+      clears the banner.
+- [ ] Log out, click **Forgot password?**, enter your email, submit — you
+      get a generic "if that email exists" message either way (this is
+      intentional: it never reveals whether an account exists). Grab the
+      reset code from the backend terminal, enter it with a new password,
+      and confirm you can log in with the new password (and not the old one).
+- [ ] If you want this to actually send real email instead of printing to
+      the terminal: set `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`/etc. in
+      `backend/.env` (see `backend/.env.example` for a Gmail App Password
+      walkthrough), then restart the backend. Not required for the demo.
+
+### Admin panel (RBAC)
+
+- [ ] As your first (admin) account, open the **Admin** link in the
+      sidebar — only admins see this link; a non-admin account visiting
+      `/admin` directly gets redirected away.
+- [ ] Confirm the user table lists every account with role/status badges
+      and a media count, and the stat tiles (total users/media/admins)
+      match reality.
+- [ ] Click **Deactivate** on a non-admin test account, confirm the dialog,
+      and confirm that account can no longer log in (clean rejection, not
+      a crash) until you **Reactivate** it.
+- [ ] Try **Promote**/**Demote** on another account. Note you can't
+      deactivate or demote *yourself*, and the last remaining admin can't
+      be demoted — both are deliberate safety guards worth mentioning if asked.
 
 If every box above is checked, the app is demo-ready.
 
@@ -194,12 +260,18 @@ state** on the login screen so the demo shows the full flow.
    vault — if I ask it something that isn't there, it says so rather than
    making something up."**
 9. **Dashboard**: let the charts speak for themselves for 10 seconds.
-10. Close on the concept map: **"Everything here — the REST API design,
+10. **Settings → Security**: toggle on the login code requirement, log out
+    and back in to show the OTP screen live (code comes from the backend
+    terminal in dev mode — point that out as intentional, not a bug).
+11. **Admin**: "Since I'm the first account ever created, I'm the admin —
+    here's a basic RBAC panel: user list, deactivate/reactivate, promote
+    and demote, with guardrails so you can't lock yourself out."
+12. Close on the concept map: **"Everything here — the REST API design,
     OpenCV face detection, Whisper transcription, full-text search, the
-    RAG pattern behind Ask AI, JWT auth and per-user data isolation — maps
-    directly to a piece of the stack I worked with during the internship.
-    This is the same engineering, rebuilt from scratch on a different,
-    non-confidential problem."**
+    RAG pattern behind Ask AI, JWT auth, email-based OTP, and role-based
+    access control — maps directly to a piece of the stack I worked with
+    during the internship. This is the same engineering, rebuilt from
+    scratch on a different, non-confidential problem."**
 
 If asked a question you don't have a ready answer for, see the
 "Anticipated professor questions" section in `PRESENTATION_GUIDE.md`.
