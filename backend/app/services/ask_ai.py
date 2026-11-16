@@ -128,14 +128,19 @@ def _anthropic_answer(question: str, citations: List[Citation]) -> str:
     return "\n".join(text_parts).strip() or _mock_answer(question, citations)
 
 
+GEMINI_TIMEOUT_SECONDS = 300
+
+
 def _gemini_answer(question: str, citations: List[Citation]) -> str:
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
     from google import genai
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return _mock_answer(question, citations) + "\n\n(GEMINI_API_KEY not set -- fell back to offline mode.)"
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
     context_blocks = []
     for i, c in enumerate(citations, start=1):
         where = f" at {c.segment_start:.1f}s" if c.segment_start is not None else ""
@@ -151,11 +156,33 @@ def _gemini_answer(question: str, citations: List[Citation]) -> str:
         "dates, or people that are not present in the context."
     )
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=f"Context:\n{context}\n\nQuestion: {question}",
-        config={"system_instruction": system, "max_output_tokens": 600},
-    )
+
+    def _call():
+        return client.models.generate_content(
+            model=model,
+            contents=f"Context:\n{context}\n\nQuestion: {question}",
+            config={"system_instruction": system, "max_output_tokens": 600},
+        )
+
+    # The SDK retries internally on transient errors (e.g. 503s) for several
+    # minutes with no way to configure that away, which makes a slow/overloaded
+    # Gemini backend look like a hung chat UI. Bound it with our own timeout so
+    # a slow call falls back to the instant mock answer instead of stalling.
+    # NOTE: a plain `with ThreadPoolExecutor()` blocks on __exit__ until the
+    # worker finishes, which would silently undo the timeout -- so this calls
+    # shutdown(wait=False) explicitly instead of using the context manager.
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_call)
+    try:
+        response = future.result(timeout=GEMINI_TIMEOUT_SECONDS)
+    except FutureTimeoutError:
+        pool.shutdown(wait=False)
+        raise TimeoutError(
+            f"Gemini did not respond within {GEMINI_TIMEOUT_SECONDS}s"
+        ) from None
+    else:
+        pool.shutdown(wait=False)
+
     text = (getattr(response, "text", None) or "").strip()
     return text or _mock_answer(question, citations)
 
