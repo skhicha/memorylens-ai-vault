@@ -93,6 +93,7 @@ class CurrentUser:
         email_verified: bool = False,
         otp_enabled: bool = False,
         mfa_enabled: bool = False,
+        is_active: bool = True,
     ):
         self.id = id
         self.email = email
@@ -101,12 +102,14 @@ class CurrentUser:
         self.email_verified = email_verified
         self.otp_enabled = otp_enabled
         self.mfa_enabled = mfa_enabled
+        self.is_active = is_active
 
 
 def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
     with db_cursor() as cur:
         cur.execute(
-            "SELECT id, email, display_name, role, email_verified, otp_enabled, mfa_enabled FROM users WHERE id = ?",
+            "SELECT id, email, display_name, role, email_verified, otp_enabled, mfa_enabled, is_active "
+            "FROM users WHERE id = ?",
             (user_id,),
         )
         row = cur.fetchone()
@@ -120,6 +123,7 @@ def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
         email_verified=bool(row["email_verified"]),
         otp_enabled=bool(row["otp_enabled"]),
         mfa_enabled=bool(row["mfa_enabled"]),
+        is_active=bool(row["is_active"]),
     )
 
 
@@ -141,13 +145,23 @@ def get_current_user(
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(401, "User not found")
+    if not user.is_active:
+        # A still-valid access/refresh JWT is otherwise stateless and would
+        # keep working right up to its natural expiry even after an admin
+        # deactivates the account -- so every protected request re-checks
+        # is_active against the DB rather than trusting the token alone.
+        raise HTTPException(403, "Your account has been deactivated. Contact an administrator.")
     return user
 
 
 def get_refresh_user_id(refresh_token: Optional[str] = Cookie(None)) -> str:
     if not refresh_token:
         raise HTTPException(401, "Missing refresh token")
-    return decode_token(refresh_token, "refresh")
+    user_id = decode_token(refresh_token, "refresh")
+    user = get_user_by_id(user_id)
+    if not user or not user.is_active:
+        raise HTTPException(401, "User not found")
+    return user_id
 
 
 def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

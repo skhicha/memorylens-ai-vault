@@ -21,8 +21,15 @@ backend/data/keyframes/
 backend/data/*.db
 backend/data/*.db-journal
 
+# Demo screenshots (copied, not tracked)
+screenshots/
+
+# Packaged demo media for re-upload elsewhere
+demo-media-for-reupload.zip
+
 # Editor / OS cruft
 .DS_Store
 .vscode/
 .idea/
 *.log
+.playwright-mcp/
