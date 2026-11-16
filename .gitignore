@@ -27,8 +27,8 @@ screenshots/
 # Packaged demo media for re-upload elsewhere
 demo-media-for-reupload.zip
 
-# Demo presentation report (local only, not for GitHub)
-docs/DEMO_REPORT.md
+# Docs folder (local only, not for GitHub)
+docs/
 
 # Editor / OS cruft
 .DS_Store
