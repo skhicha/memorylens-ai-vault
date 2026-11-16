@@ -27,6 +27,9 @@ screenshots/
 # Packaged demo media for re-upload elsewhere
 demo-media-for-reupload.zip
 
+# Demo presentation report (local only, not for GitHub)
+docs/DEMO_REPORT.md
+
 # Editor / OS cruft
 .DS_Store
 .vscode/
