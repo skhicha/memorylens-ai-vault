@@ -120,10 +120,20 @@ function authHeaders(init?: RequestInit): HeadersInit {
 }
 
 async function throwForResponse(res: Response): Promise<never> {
-  let detail = res.statusText;
+  let detail: string = res.statusText;
   try {
     const body = await res.json();
-    detail = body.detail ?? detail;
+    if (typeof body.detail === "string") {
+      detail = body.detail;
+    } else if (Array.isArray(body.detail)) {
+      // FastAPI validation errors: [{ loc, msg, type }, ...]
+      detail = body.detail
+        .map((item: { msg?: string }) => item?.msg)
+        .filter(Boolean)
+        .join("; ") || detail;
+    } else if (body.detail != null) {
+      detail = JSON.stringify(body.detail);
+    }
   } catch {
     // ignore - no JSON body
   }
@@ -367,7 +377,20 @@ export const api = {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(JSON.parse(xhr.responseText));
         } else {
-          reject(new Error(`Upload failed: ${xhr.status} ${xhr.responseText}`));
+          let detail = xhr.statusText || `HTTP ${xhr.status}`;
+          try {
+            const body = JSON.parse(xhr.responseText);
+            if (typeof body.detail === "string") {
+              detail = body.detail;
+            } else if (Array.isArray(body.detail)) {
+              detail = body.detail.map((item: { msg?: string }) => item?.msg).filter(Boolean).join("; ") || detail;
+            } else if (body.detail != null) {
+              detail = JSON.stringify(body.detail);
+            }
+          } catch {
+            // ignore - no JSON body
+          }
+          reject(new Error(`Upload failed: ${detail}`));
         }
       };
       xhr.onerror = () => reject(new Error("Upload failed: network error"));
