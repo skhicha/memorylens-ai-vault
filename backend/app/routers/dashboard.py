@@ -45,6 +45,11 @@ class DashboardSummary(BaseModel):
     type_split: List[TypeSplit]
     tag_distribution: List[TagCount]
     map_hotspots: List[MapHotspot]
+    # Only populated when the caller is an admin: a system-wide summary
+    # across all users, shown alongside their own stats above.
+    is_admin: bool = False
+    system_total_users: Optional[int] = None
+    system_total_media: Optional[int] = None
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -92,6 +97,14 @@ def dashboard_summary(current_user: CurrentUser = Depends(get_current_user)) -> 
             for r in cur.fetchall()
         ]
 
+        system_total_users = None
+        system_total_media = None
+        if current_user.role == "admin":
+            cur.execute("SELECT COUNT(*) AS c FROM users")
+            system_total_users = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM media")
+            system_total_media = cur.fetchone()["c"]
+
     return DashboardSummary(
         total_media=total_media,
         total_photos=total_photos,
@@ -102,6 +115,9 @@ def dashboard_summary(current_user: CurrentUser = Depends(get_current_user)) -> 
         type_split=type_split,
         tag_distribution=tag_distribution,
         map_hotspots=map_hotspots,
+        is_admin=current_user.role == "admin",
+        system_total_users=system_total_users,
+        system_total_media=system_total_media,
     )
 
 

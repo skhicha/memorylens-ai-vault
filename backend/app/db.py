@@ -138,7 +138,7 @@ def get_connection() -> sqlite3.Connection:
 USER_COLUMN_MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN otp_enabled INTEGER DEFAULT 0",
-    "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'",
+    "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'editor'",
     "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1",
     # Google SSO: nullable, set only for accounts created/linked via
     # "Sign in with Google". A password_hash still exists for these rows

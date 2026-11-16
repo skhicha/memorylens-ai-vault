@@ -120,7 +120,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     display_name: str
-    role: str = "member"
+    role: str = "editor"
     email_verified: bool = False
     otp_enabled: bool = False
     mfa_enabled: bool = False
@@ -137,7 +137,7 @@ def _user_out(row_or_user) -> "UserOut":
             id=row_or_user["id"],
             email=row_or_user["email"],
             display_name=row_or_user["display_name"],
-            role=row_or_user["role"] or "member",
+            role=row_or_user["role"] or "editor",
             email_verified=bool(row_or_user["email_verified"]),
             otp_enabled=bool(row_or_user["otp_enabled"]),
             mfa_enabled=bool(row_or_user["mfa_enabled"]),
@@ -252,7 +252,7 @@ def register(req: RegisterRequest, request: Request, response: Response) -> Auth
         user_id = uuid.uuid4().hex
         cur.execute("SELECT COUNT(*) AS n FROM users")
         is_first_user = cur.fetchone()["n"] == 0
-        role = "admin" if is_first_user else "member"
+        role = "admin" if is_first_user else "editor"
         cur.execute(
             "INSERT INTO users (id, email, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)",
             (user_id, req.email, hash_password(req.password), req.display_name, role),
@@ -586,7 +586,7 @@ def google_callback(code: Optional[str] = None, state: Optional[str] = None, err
             user_id = uuid.uuid4().hex
             cur.execute("SELECT COUNT(*) AS n FROM users")
             is_first_user = cur.fetchone()["n"] == 0
-            role = "admin" if is_first_user else "member"
+            role = "admin" if is_first_user else "editor"
             # No password is ever set by the user for a Google-only account;
             # password_hash is NOT NULL, so a random, never-typeable value
             # fills it -- a plain password login is simply impossible for

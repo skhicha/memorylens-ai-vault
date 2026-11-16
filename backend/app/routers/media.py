@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, get_current_user, require_role
 from app.db import UPLOADS_DIR, db_cursor
 from app.services.pipeline import PHOTO_EXTS, VIDEO_EXTS, classify_media_type, process_media_async
 
@@ -112,7 +112,7 @@ def _row_to_media_out(row, tags: List[str]) -> MediaOut:
 
 @router.post("/upload", response_model=MediaOut)
 async def upload_media(
-    file: UploadFile = File(...), current_user: CurrentUser = Depends(get_current_user)
+    file: UploadFile = File(...), current_user: CurrentUser = Depends(require_role("admin", "editor"))
 ) -> MediaOut:
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTS:
@@ -239,7 +239,7 @@ class FavoriteIn(BaseModel):
 
 @router.post("/{media_id}/favorite", response_model=MediaOut)
 def set_favorite(
-    media_id: str, body: FavoriteIn, current_user: CurrentUser = Depends(get_current_user)
+    media_id: str, body: FavoriteIn, current_user: CurrentUser = Depends(require_role("admin", "editor"))
 ) -> MediaOut:
     with db_cursor() as cur:
         row = _get_owned_media_row(media_id, current_user.id, cur)
@@ -257,7 +257,7 @@ def set_favorite(
 
 
 @router.delete("/{media_id}")
-def delete_media(media_id: str, current_user: CurrentUser = Depends(get_current_user)) -> dict:
+def delete_media(media_id: str, current_user: CurrentUser = Depends(require_role("admin", "editor"))) -> dict:
     with db_cursor() as cur:
         row = _get_owned_media_row(media_id, current_user.id, cur)
         if not row:

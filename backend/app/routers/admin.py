@@ -37,7 +37,7 @@ class AdminStatsResponse(BaseModel):
 
 
 class SetRoleRequest(BaseModel):
-    role: Literal["admin", "member"]
+    role: Literal["admin", "editor", "viewer"]
 
 
 @router.get("/users", response_model=AdminUsersResponse)
@@ -58,7 +58,7 @@ def list_users(_: CurrentUser = Depends(require_admin)) -> AdminUsersResponse:
                 id=row["id"],
                 email=row["email"],
                 display_name=row["display_name"],
-                role=row["role"] or "member",
+                role=row["role"] or "editor",
                 is_active=bool(row["is_active"]),
                 email_verified=bool(row["email_verified"]),
                 created_at=row["created_at"],
@@ -111,7 +111,7 @@ def set_role(user_id: str, req: SetRoleRequest, current_user: CurrentUser = Depe
         if not row:
             raise HTTPException(404, "User not found")
 
-        if row["role"] == "admin" and req.role == "member":
+        if row["role"] == "admin" and req.role != "admin":
             cur.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'")
             if cur.fetchone()["n"] <= 1:
                 raise HTTPException(400, "At least one admin must remain")

@@ -89,7 +89,7 @@ class CurrentUser:
         id: str,
         email: str,
         display_name: str,
-        role: str = "member",
+        role: str = "editor",
         email_verified: bool = False,
         otp_enabled: bool = False,
         mfa_enabled: bool = False,
@@ -119,7 +119,7 @@ def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
         id=row["id"],
         email=row["email"],
         display_name=row["display_name"],
-        role=row["role"] or "member",
+        role=row["role"] or "editor",
         email_verified=bool(row["email_verified"]),
         otp_enabled=bool(row["otp_enabled"]),
         mfa_enabled=bool(row["mfa_enabled"]),
@@ -168,3 +168,22 @@ def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> Curr
     if current_user.role != "admin":
         raise HTTPException(403, "Admin access required")
     return current_user
+
+
+def require_role(*roles: str):
+    """
+    FastAPI dependency factory: raises a clean 403 unless current_user.role
+    is one of `roles`. Use e.g. Depends(require_role("admin", "editor")) to
+    block viewers from write endpoints while still allowing admins/editors.
+    """
+
+    def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if current_user.role not in roles:
+            raise HTTPException(
+                403,
+                f"This action requires one of the following roles: {', '.join(roles)}. "
+                f"Your role is '{current_user.role}'.",
+            )
+        return current_user
+
+    return _check
