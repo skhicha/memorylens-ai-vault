@@ -265,6 +265,11 @@ select:focus {
 .grid {
   display: grid;
   gap: var(--sp-5);
+  min-width: 0;
+}
+
+.grid > * {
+  min-width: 0;
 }
 
 .stat-number {

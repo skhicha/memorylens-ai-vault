@@ -235,7 +235,7 @@ export function SettingsPage() {
                   placeholder="Enter verification code"
                   value={verifyCode}
                   onChange={(e) => setVerifyCode(e.target.value.trim())}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, minWidth: 0 }}
                 />
                 <button className="btn btn-primary" onClick={submitVerifyCode} disabled={verifying || verifyCode.length < 4}>
                   {verifying ? "Verifying…" : "Verify"}
