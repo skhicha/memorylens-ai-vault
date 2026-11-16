@@ -145,6 +145,16 @@
   margin-bottom: 16px;
 }
 
+.auth-success {
+  background: rgba(46, 204, 113, 0.12);
+  border: 1px solid rgba(46, 204, 113, 0.3);
+  color: var(--success);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
 .auth-submit {
   width: 100%;
   justify-content: center;
