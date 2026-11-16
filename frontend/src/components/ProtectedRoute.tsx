@@ -5,9 +5,11 @@ import { useAuth } from "../lib/AuthContext";
 export function ProtectedRoute({
   children,
   requireAdmin = false,
+  blockRoles = [],
 }: {
   children: ReactNode;
   requireAdmin?: boolean;
+  blockRoles?: string[];
 }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -21,6 +23,10 @@ export function ProtectedRoute({
   }
 
   if (requireAdmin && user.role !== "admin") {
+    return <Navigate to="/library" replace />;
+  }
+
+  if (blockRoles.includes(user.role)) {
     return <Navigate to="/library" replace />;
   }
 

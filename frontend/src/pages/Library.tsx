@@ -3,9 +3,12 @@ import { ImageOff, CheckSquare, Trash2, X } from "lucide-react";
 import { api, type MediaItem, type MediaType } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { LibrarySkeletonGrid } from "../components/Skeleton";
+import { useAuth } from "../lib/AuthContext";
 import "./Library.css";
 
 export function LibraryPage() {
+  const { user } = useAuth();
+  const canEdit = user?.role !== "viewer";
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaType, setMediaType] = useState<MediaType | "">("");
@@ -110,9 +113,11 @@ export function LibraryPage() {
         >
           Favorites
         </button>
-        <button type="button" className={`btn btn-sm${selectMode ? " btn-primary" : ""}`} onClick={toggleSelectMode}>
-          <CheckSquare size={14} /> {selectMode ? "Cancel select" : "Select"}
-        </button>
+        {canEdit && (
+          <button type="button" className={`btn btn-sm${selectMode ? " btn-primary" : ""}`} onClick={toggleSelectMode}>
+            <CheckSquare size={14} /> {selectMode ? "Cancel select" : "Select"}
+          </button>
+        )}
       </div>
 
       {selectMode && (

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Video, ImageIcon, Users, Star, Check } from "lucide-react";
 import { api, type MediaItem } from "../lib/api";
 import { withAuth } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import "./MediaCard.css";
 
 function formatDate(iso: string): string {
@@ -25,6 +26,8 @@ export function MediaCard({
   onFavoriteChange?: (isFavorite: boolean) => void;
 }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canEdit = user?.role !== "viewer";
   const [favorite, setFavorite] = useState(media.is_favorite);
   const [favBusy, setFavBusy] = useState(false);
 
@@ -65,7 +68,7 @@ export function MediaCard({
 
       {selectable ? (
         <div className={`media-card-select-box${selected ? " checked" : ""}`}>{selected && <Check size={14} />}</div>
-      ) : (
+      ) : canEdit ? (
         <button
           type="button"
           className={`media-card-fav${favorite ? " active" : ""}`}
@@ -74,7 +77,11 @@ export function MediaCard({
         >
           <Star size={16} fill={favorite ? "currentColor" : "none"} />
         </button>
-      )}
+      ) : favorite ? (
+        <div className="media-card-fav active" title="Viewers can't change favorites" style={{ pointerEvents: "none" }}>
+          <Star size={16} fill="currentColor" />
+        </div>
+      ) : null}
 
       <div className="media-card-badge">
         {media.media_type === "video" ? <Video size={12} /> : <ImageIcon size={12} />}

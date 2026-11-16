@@ -69,6 +69,16 @@ export function DashboardPage() {
         <StatCard value={summary.total_with_gps} label="Geotagged items" />
       </div>
 
+      {summary.is_admin && (
+        <div className="glass-card" style={{ padding: 20, marginBottom: 24 }}>
+          <h3 style={{ marginTop: 0 }}>System-wide (admin only)</h3>
+          <div className="stat-grid">
+            <StatCard value={summary.system_total_users ?? 0} label="Total users" />
+            <StatCard value={summary.system_total_media ?? 0} label="Total media (all users)" />
+          </div>
+        </div>
+      )}
+
       <div className="chart-grid">
         <div className="glass-card chart-card">
           <h3>Uploads over time</h3>

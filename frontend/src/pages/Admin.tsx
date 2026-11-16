@@ -5,12 +5,15 @@ import { useAuth } from "../lib/AuthContext";
 import { TableSkeleton } from "../components/Skeleton";
 import "./Admin.css";
 
+type Role = "admin" | "editor" | "viewer";
+
 interface PendingAction {
   user: AdminUser;
-  kind: "deactivate" | "reactivate" | "promote" | "demote";
+  kind: "deactivate" | "reactivate" | "role";
+  newRole?: Role;
 }
 
-const ACTION_COPY: Record<PendingAction["kind"], { title: string; body: (u: AdminUser) => string }> = {
+const ACTION_COPY: Record<PendingAction["kind"], { title: string; body: (u: AdminUser, newRole?: Role) => string }> = {
   deactivate: {
     title: "Deactivate user",
     body: (u) => `${u.display_name} (${u.email}) will no longer be able to log in. Continue?`,
@@ -19,13 +22,9 @@ const ACTION_COPY: Record<PendingAction["kind"], { title: string; body: (u: Admi
     title: "Reactivate user",
     body: (u) => `${u.display_name} (${u.email}) will be able to log in again. Continue?`,
   },
-  promote: {
-    title: "Promote to admin",
-    body: (u) => `${u.display_name} (${u.email}) will gain full admin access. Continue?`,
-  },
-  demote: {
-    title: "Demote to member",
-    body: (u) => `${u.display_name} (${u.email}) will lose admin access. Continue?`,
+  role: {
+    title: "Change role",
+    body: (u, newRole) => `${u.display_name} (${u.email}) will become '${newRole}'. Continue?`,
   },
 };
 
@@ -34,6 +33,7 @@ export function AdminPage() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [acting, setActing] = useState(false);
 
@@ -57,10 +57,11 @@ export function AdminPage() {
     try {
       if (pending.kind === "deactivate") await api.adminDeactivate(pending.user.id);
       if (pending.kind === "reactivate") await api.adminReactivate(pending.user.id);
-      if (pending.kind === "promote") await api.adminSetRole(pending.user.id, "admin");
-      if (pending.kind === "demote") await api.adminSetRole(pending.user.id, "member");
+      if (pending.kind === "role" && pending.newRole) await api.adminSetRole(pending.user.id, pending.newRole);
+      setSuccess(`${ACTION_COPY[pending.kind].title} succeeded for ${pending.user.email}.`);
       setPending(null);
       await load();
+      setTimeout(() => setSuccess(null), 4000);
     } catch (err) {
       setError((err as Error).message.replace(/^\d+\s*/, "") || "Action failed");
       setPending(null);
@@ -77,6 +78,7 @@ export function AdminPage() {
       </div>
 
       {error && <div className="auth-error">{error}</div>}
+      {success && <div className="auth-success">{success}</div>}
 
       <div className="admin-stats">
         <div className="admin-stat-tile glass-card">
@@ -152,21 +154,19 @@ export function AdminPage() {
                             Reactivate
                           </button>
                         )}
-                        {u.role === "member" ? (
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => setPending({ user: u, kind: "promote" })}
+                        <label className="admin-role-select">
+                          <UserCog size={14} />
+                          <select
+                            value={u.role}
+                            onChange={(e) =>
+                              setPending({ user: u, kind: "role", newRole: e.target.value as Role })
+                            }
                           >
-                            <UserCog size={14} /> Promote
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => setPending({ user: u, kind: "demote" })}
-                          >
-                            <UserCog size={14} /> Demote
-                          </button>
-                        )}
+                            <option value="admin">admin</option>
+                            <option value="editor">editor</option>
+                            <option value="viewer">viewer</option>
+                          </select>
+                        </label>
                       </>
                     )}
                   </td>
@@ -182,7 +182,7 @@ export function AdminPage() {
         <div className="admin-modal-overlay" onClick={() => !acting && setPending(null)}>
           <div className="admin-modal glass-card" onClick={(e) => e.stopPropagation()}>
             <h3>{ACTION_COPY[pending.kind].title}</h3>
-            <p>{ACTION_COPY[pending.kind].body(pending.user)}</p>
+            <p>{ACTION_COPY[pending.kind].body(pending.user, pending.newRole)}</p>
             <div className="admin-modal-actions">
               <button className="btn" onClick={() => setPending(null)} disabled={acting}>
                 Cancel

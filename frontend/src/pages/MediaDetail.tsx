@@ -6,11 +6,14 @@ import "leaflet/dist/leaflet.css";
 import "../lib/leafletIcons";
 import { api, withAuth, type MediaDetail as MediaDetailType } from "../lib/api";
 import { FaceBoxOverlay } from "../components/FaceBoxOverlay";
+import { useAuth } from "../lib/AuthContext";
 import "./MediaDetail.css";
 
 export function MediaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canEdit = user?.role !== "viewer";
   const [media, setMedia] = useState<MediaDetailType | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -43,7 +46,10 @@ export function MediaDetailPage() {
         <span className={`status-pill ${media.status}`}>{media.status}</span>
         <button
           className="btn"
+          disabled={!canEdit}
+          title={canEdit ? "Delete" : "Viewers can't delete media"}
           onClick={async () => {
+            if (!canEdit) return;
             if (confirm(`Delete ${media.filename}? This cannot be undone.`)) {
               await api.deleteMedia(media.id);
               navigate("/library");

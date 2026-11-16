@@ -84,6 +84,9 @@ export interface DashboardSummary {
   type_split: { media_type: string; count: number }[];
   tag_distribution: { tag: string; count: number }[];
   map_hotspots: { media_id: string; filename: string; lat: number; lon: number }[];
+  is_admin?: boolean;
+  system_total_users?: number | null;
+  system_total_media?: number | null;
 }
 
 export interface SettingsInfo {
@@ -160,7 +163,7 @@ export interface AuthUser {
   id: string;
   email: string;
   display_name: string;
-  role: "admin" | "member";
+  role: "admin" | "editor" | "viewer";
   email_verified: boolean;
   otp_enabled: boolean;
   mfa_enabled: boolean;
@@ -212,7 +215,7 @@ export interface AdminUser {
   id: string;
   email: string;
   display_name: string;
-  role: "admin" | "member";
+  role: "admin" | "editor" | "viewer";
   is_active: boolean;
   email_verified: boolean;
   created_at: string;
@@ -354,7 +357,7 @@ export const api = {
     return request<{ ok: boolean }>(`/api/admin/users/${id}/reactivate`, { method: "POST" });
   },
 
-  adminSetRole(id: string, role: "admin" | "member") {
+  adminSetRole(id: string, role: "admin" | "editor" | "viewer") {
     return request<{ ok: boolean }>(`/api/admin/users/${id}/role`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

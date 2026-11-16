@@ -97,9 +97,30 @@
   color: var(--accent);
 }
 
-.badge-member {
+.badge-member,
+.badge-editor {
   background: var(--surface-strong);
   color: var(--text-muted);
+}
+
+.badge-viewer {
+  background: rgba(255, 193, 7, 0.14);
+  color: #b8860b;
+}
+
+.admin-role-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-role-select select {
+  background: var(--surface-strong);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12.5px;
 }
 
 .badge-active {

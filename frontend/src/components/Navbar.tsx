@@ -49,7 +49,7 @@ export function Navbar() {
       </div>
 
       <div className="navbar-links">
-        {LINKS.map(({ to, label, icon: Icon }) => (
+        {LINKS.filter(({ to }) => to !== "/upload" || user?.role !== "viewer").map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
