@@ -12,6 +12,9 @@ export function getStoredTheme(): Theme {
   return "dark";
 }
 
+type Listener = (theme: Theme) => void;
+const listeners = new Set<Listener>();
+
 export function setStoredTheme(theme: Theme): void {
   try {
     localStorage.setItem(STORAGE_KEY, theme);
@@ -19,6 +22,12 @@ export function setStoredTheme(theme: Theme): void {
     // ignore
   }
   document.documentElement.setAttribute("data-theme", theme);
+  listeners.forEach((listener) => listener(theme));
+}
+
+export function subscribeToTheme(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 export function applyInitialTheme(): Theme {
