@@ -10,6 +10,9 @@ Generation is pluggable via LLM_PROVIDER:
     snippets -- it never invents facts not present in the citations.
   - "anthropic": calls the real Claude API (anthropic Python SDK) with the
     retrieved context, instructed to answer only from it and cite sources.
+  - "gemini": calls the Google Gemini API (google-genai Python SDK) with the
+    same retrieved context and the same answer-only-from-context, cite-sources
+    behavior as the anthropic path.
 """
 from __future__ import annotations
 
@@ -125,6 +128,38 @@ def _anthropic_answer(question: str, citations: List[Citation]) -> str:
     return "\n".join(text_parts).strip() or _mock_answer(question, citations)
 
 
+def _gemini_answer(question: str, citations: List[Citation]) -> str:
+    from google import genai
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return _mock_answer(question, citations) + "\n\n(GEMINI_API_KEY not set -- fell back to offline mode.)"
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    context_blocks = []
+    for i, c in enumerate(citations, start=1):
+        where = f" at {c.segment_start:.1f}s" if c.segment_start is not None else ""
+        clean_snippet = c.snippet.replace("<mark>", "").replace("</mark>", "")
+        context_blocks.append(f"[{i}] file={c.filename}{where} source={c.source}\n{clean_snippet}")
+    context = "\n\n".join(context_blocks) if context_blocks else "(no matching media found)"
+
+    system = (
+        "You are the Ask AI assistant for MemoryLens AI, a personal photo/video vault. "
+        "Answer the user's question using ONLY the numbered context snippets below, which come "
+        "from the user's own transcripts/tags/filenames. Cite sources inline like [1], [2]. "
+        "If the context doesn't contain the answer, say so plainly -- never invent details, "
+        "dates, or people that are not present in the context."
+    )
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=f"Context:\n{context}\n\nQuestion: {question}",
+        config={"system_instruction": system, "max_output_tokens": 600},
+    )
+    text = (getattr(response, "text", None) or "").strip()
+    return text or _mock_answer(question, citations)
+
+
 def answer_question(question: str, user_id: str) -> AskResult:
     citations = _gather_citations(question, user_id)
     provider = os.environ.get("LLM_PROVIDER", "mock").lower()
@@ -135,6 +170,15 @@ def answer_question(question: str, user_id: str) -> AskResult:
         except Exception as exc:  # noqa: BLE001 - never 500 the chat on provider errors
             answer = (
                 f"[Anthropic provider error, falling back to offline mode: {exc}]\n\n"
+                + _mock_answer(question, citations)
+            )
+            provider = "mock (fallback)"
+    elif provider == "gemini":
+        try:
+            answer = _gemini_answer(question, citations)
+        except Exception as exc:  # noqa: BLE001 - never 500 the chat on provider errors
+            answer = (
+                f"[Gemini provider error, falling back to offline mode: {exc}]\n\n"
                 + _mock_answer(question, citations)
             )
             provider = "mock (fallback)"
