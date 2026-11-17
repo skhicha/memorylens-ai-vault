@@ -120,7 +120,133 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
     segment_start UNINDEXED,
     text
 );
+
+-- RBAC: roles/permissions live alongside the existing `users.role` TEXT
+-- column rather than replacing it. `users.role` remains the source of
+-- truth for "which role slug a user has" (so existing login/require_role
+-- guards keep working untouched); these tables add a real, editable
+-- permission set per role slug for the new has_permission()/require_permission()
+-- checks and the admin Roles UI.
+CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    description TEXT,
+    is_system INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS permissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,
+    resource TEXT NOT NULL,
+    action TEXT NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, permission_id)
+);
 """
+
+# Permission catalogue: resource -> [(action, description), ...]. Codes are
+# "<resource>.<action>". Mirrors the reference app's PERMISSION_CATALOGUE
+# shape, adapted to this app's actual routers.
+PERMISSION_CATALOGUE: dict[str, list[tuple[str, str]]] = {
+    "media": [
+        ("view", "View media library and detail pages"),
+        ("upload", "Upload new photos/videos"),
+        ("edit", "Edit tags and favorite status"),
+        ("delete", "Delete media"),
+        ("download", "Download/stream original media files"),
+    ],
+    "search": [
+        ("view", "Use search"),
+    ],
+    "ask_ai": [
+        ("view", "Use the Ask AI chat"),
+    ],
+    "dashboard": [
+        ("view", "View the dashboard"),
+    ],
+    "users": [
+        ("view", "View the user list"),
+        ("create", "Create new users"),
+        ("edit", "Edit users (role, name, active status)"),
+        ("delete", "Delete users"),
+    ],
+    "roles": [
+        ("view", "View roles and their permissions"),
+        ("edit", "Edit role permissions"),
+    ],
+    "settings": [
+        ("view", "View account/appearance settings"),
+        ("edit", "Edit account/appearance settings"),
+    ],
+}
+
+# Default grants per role slug, matching current hard-coded behaviour so
+# nothing regresses when this table starts being consulted.
+_ALL_CODES = [f"{resource}.{action}" for resource, actions in PERMISSION_CATALOGUE.items() for action, _ in actions]
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
+    "admin": list(_ALL_CODES),
+    "editor": [
+        "media.view", "media.upload", "media.edit", "media.delete", "media.download",
+        "search.view", "ask_ai.view", "dashboard.view",
+        "settings.view", "settings.edit",
+    ],
+    "viewer": [
+        "media.view", "media.download",
+        "search.view", "ask_ai.view", "dashboard.view",
+        "settings.view",
+    ],
+}
+
+SYSTEM_ROLES = [
+    ("admin", "Admin", "Full access to everything"),
+    ("editor", "Editor", "Can manage media, search, and use Ask AI"),
+    ("viewer", "Viewer", "Read-only access"),
+]
+
+
+def _seed_rbac(conn: sqlite3.Connection) -> None:
+    for slug, name, description in SYSTEM_ROLES:
+        conn.execute(
+            "INSERT INTO roles (name, slug, description, is_system) VALUES (?, ?, ?, 1) "
+            "ON CONFLICT(slug) DO NOTHING",
+            (name, slug, description),
+        )
+    for resource, actions in PERMISSION_CATALOGUE.items():
+        for action, description in actions:
+            code = f"{resource}.{action}"
+            conn.execute(
+                "INSERT INTO permissions (code, resource, action, description) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(code) DO NOTHING",
+                (code, resource, action, description),
+            )
+    # Only seed default role_permissions the FIRST time a role has none at
+    # all, so re-running init_db() never clobbers permissions an admin has
+    # since toggled off/on via the Roles UI.
+    for slug in DEFAULT_ROLE_PERMISSIONS:
+        role_row = conn.execute("SELECT id FROM roles WHERE slug = ?", (slug,)).fetchone()
+        if not role_row:
+            continue
+        role_id = role_row[0]
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM role_permissions WHERE role_id = ?", (role_id,)
+        ).fetchone()[0]
+        if existing:
+            continue
+        for code in DEFAULT_ROLE_PERMISSIONS[slug]:
+            perm_row = conn.execute("SELECT id FROM permissions WHERE code = ?", (code,)).fetchone()
+            if perm_row:
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)",
+                    (role_id, perm_row[0]),
+                )
+    conn.commit()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -178,6 +304,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.commit()
         _migrate(conn)
+        _seed_rbac(conn)
     finally:
         conn.close()
 

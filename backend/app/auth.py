@@ -170,6 +170,37 @@ def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> Curr
     return current_user
 
 
+def has_permission(role: str, code: str) -> bool:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE r.slug = ? AND p.code = ?
+            """,
+            (role, code),
+        )
+        return cur.fetchone() is not None
+
+
+def require_permission(code: str):
+    """
+    FastAPI dependency factory: raises a clean 403 unless the current
+    user's role currently grants `code` per the role_permissions table.
+    This is the finer-grained, DB-editable sibling of require_role(); new
+    code should prefer this where per-role toggling is useful, while
+    existing require_role()-guarded routes keep working unchanged.
+    """
+
+    def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not has_permission(current_user.role, code):
+            raise HTTPException(403, f"This action requires the '{code}' permission.")
+        return current_user
+
+    return _check
+
+
 def require_role(*roles: str):
     """
     FastAPI dependency factory: raises a clean 403 unless current_user.role
