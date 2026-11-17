@@ -19,7 +19,7 @@ import { useCountUp } from "../lib/useCountUp";
 import { StatTileSkeleton } from "../components/Skeleton";
 import "./Dashboard.css";
 
-const COLORS = ["#7c6cff", "#4fd1c5", "#f0b429", "#ff6b6b", "#3ddc97", "#5a4ae0"];
+const COLORS = ["#a8431f", "#7a9b6e", "#c98f3a", "#8a6a9e", "#d19a6a", "#6b8a7a"];
 
 function StatCard({ value, label }: { value: number; label: string }) {
   const display = useCountUp(value);
@@ -42,7 +42,8 @@ export function DashboardPage() {
     return (
       <div>
         <div className="page-header">
-          <h1>Dashboard</h1>
+          <span className="eyebrow">Welcome back</span>
+          <h1>Dashboard<span className="heading-period">.</span></h1>
           <p>An overview of what's in your vault.</p>
         </div>
         <div className="stat-grid">
@@ -57,7 +58,8 @@ export function DashboardPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Dashboard</h1>
+        <span className="eyebrow">Welcome back</span>
+        <h1>Dashboard<span className="heading-period">.</span></h1>
         <p>An overview of what's in your vault.</p>
       </div>
 
@@ -88,7 +90,7 @@ export function DashboardPage() {
               <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={11} />
               <YAxis allowDecimals={false} stroke="var(--text-muted)" fontSize={11} />
               <Tooltip />
-              <Line type="monotone" dataKey="count" stroke="#7c6cff" strokeWidth={2.5} dot={false} />
+              <Line type="monotone" dataKey="count" stroke="#a8431f" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -123,7 +125,7 @@ export function DashboardPage() {
               <XAxis type="number" allowDecimals={false} stroke="var(--text-muted)" fontSize={11} />
               <YAxis type="category" dataKey="tag" width={110} stroke="var(--text-muted)" fontSize={11} />
               <Tooltip />
-              <Bar dataKey="count" fill="#4fd1c5" radius={[0, 6, 6, 0]} />
+              <Bar dataKey="count" fill="#7a9b6e" radius={[0, 6, 6, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

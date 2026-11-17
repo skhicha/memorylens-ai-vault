@@ -20,8 +20,9 @@
 }
 
 .admin-stat-value {
-  font-size: 22px;
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 600;
   color: var(--text);
   line-height: 1.1;
 }
@@ -93,7 +94,7 @@
 }
 
 .badge-admin {
-  background: rgba(124, 92, 255, 0.16);
+  background: rgba(var(--accent-rgb), 0.16);
   color: var(--accent);
 }
 
@@ -104,8 +105,8 @@
 }
 
 .badge-viewer {
-  background: rgba(255, 193, 7, 0.14);
-  color: #b8860b;
+  background: rgba(201, 143, 58, 0.16);
+  color: #c98f3a;
 }
 
 .admin-role-select {
@@ -141,11 +142,22 @@
 .admin-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(20, 12, 6, 0.55);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
+  animation: ml-fade-in-backdrop 0.2s ease;
+}
+
+@keyframes ml-fade-in-backdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .admin-modal {

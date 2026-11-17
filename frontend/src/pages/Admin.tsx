@@ -73,7 +73,8 @@ export function AdminPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Admin</h1>
+        <span className="eyebrow">Workspace oversight</span>
+        <h1>Admin<span className="heading-period">.</span></h1>
         <p>User management and workspace stats.</p>
       </div>
 
