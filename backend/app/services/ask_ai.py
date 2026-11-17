@@ -13,6 +13,12 @@ Generation is pluggable via LLM_PROVIDER:
   - "gemini": calls the Google Gemini API (google-genai Python SDK) with the
     same retrieved context and the same answer-only-from-context, cite-sources
     behavior as the anthropic path.
+  - "openai": calls the OpenAI Chat Completions API (openai Python SDK) with
+    the same retrieved context and the same answer-only-from-context,
+    cite-sources behavior as the anthropic/gemini paths.
+  - "ollama": calls a locally-running Ollama server (free, no API key, no
+    network egress) over its OpenAI-compatible HTTP endpoint, with the same
+    answer-only-from-context, cite-sources behavior as the other paths.
 """
 from __future__ import annotations
 
@@ -187,6 +193,85 @@ def _gemini_answer(question: str, citations: List[Citation]) -> str:
     return text or _mock_answer(question, citations)
 
 
+OPENAI_TIMEOUT_SECONDS = 60
+
+
+def _openai_answer(question: str, citations: List[Citation]) -> str:
+    from openai import OpenAI
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return _mock_answer(question, citations) + "\n\n(OPENAI_API_KEY not set -- fell back to offline mode.)"
+
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    context_blocks = []
+    for i, c in enumerate(citations, start=1):
+        where = f" at {c.segment_start:.1f}s" if c.segment_start is not None else ""
+        clean_snippet = c.snippet.replace("<mark>", "").replace("</mark>", "")
+        context_blocks.append(f"[{i}] file={c.filename}{where} source={c.source}\n{clean_snippet}")
+    context = "\n\n".join(context_blocks) if context_blocks else "(no matching media found)"
+
+    system = (
+        "You are the Ask AI assistant for MemoryLens AI, a personal photo/video vault. "
+        "Answer the user's question using ONLY the numbered context snippets below, which come "
+        "from the user's own transcripts/tags/filenames. Cite sources inline like [1], [2]. "
+        "If the context doesn't contain the answer, say so plainly -- never invent details, "
+        "dates, or people that are not present in the context."
+    )
+    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=600,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+        ],
+    )
+    text = (response.choices[0].message.content or "").strip()
+    return text or _mock_answer(question, citations)
+
+
+OLLAMA_TIMEOUT_SECONDS = 120
+
+
+def _ollama_answer(question: str, citations: List[Citation]) -> str:
+    import httpx
+
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    model = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+    context_blocks = []
+    for i, c in enumerate(citations, start=1):
+        where = f" at {c.segment_start:.1f}s" if c.segment_start is not None else ""
+        clean_snippet = c.snippet.replace("<mark>", "").replace("</mark>", "")
+        context_blocks.append(f"[{i}] file={c.filename}{where} source={c.source}\n{clean_snippet}")
+    context = "\n\n".join(context_blocks) if context_blocks else "(no matching media found)"
+
+    system = (
+        "You are the Ask AI assistant for MemoryLens AI, a personal photo/video vault. "
+        "Answer the user's question using ONLY the numbered context snippets below, which come "
+        "from the user's own transcripts/tags/filenames. Cite sources inline like [1], [2]. "
+        "If the context doesn't contain the answer, say so plainly -- never invent details, "
+        "dates, or people that are not present in the context."
+    )
+    response = httpx.post(
+        f"{base_url}/api/chat",
+        json={
+            "model": model,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+            ],
+            "options": {"num_predict": 600},
+        },
+        timeout=OLLAMA_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
+    text = (data.get("message", {}).get("content") or "").strip()
+    return text or _mock_answer(question, citations)
+
+
 def answer_question(question: str, user_id: str) -> AskResult:
     citations = _gather_citations(question, user_id)
     provider = os.environ.get("LLM_PROVIDER", "mock").lower()
@@ -206,6 +291,24 @@ def answer_question(question: str, user_id: str) -> AskResult:
         except Exception as exc:  # noqa: BLE001 - never 500 the chat on provider errors
             answer = (
                 f"[Gemini provider error, falling back to offline mode: {exc}]\n\n"
+                + _mock_answer(question, citations)
+            )
+            provider = "mock (fallback)"
+    elif provider == "openai":
+        try:
+            answer = _openai_answer(question, citations)
+        except Exception as exc:  # noqa: BLE001 - never 500 the chat on provider errors
+            answer = (
+                f"[OpenAI provider error, falling back to offline mode: {exc}]\n\n"
+                + _mock_answer(question, citations)
+            )
+            provider = "mock (fallback)"
+    elif provider == "ollama":
+        try:
+            answer = _ollama_answer(question, citations)
+        except Exception as exc:  # noqa: BLE001 - never 500 the chat on provider errors
+            answer = (
+                f"[Ollama provider error, falling back to offline mode: {exc}]\n\n"
                 + _mock_answer(question, citations)
             )
             provider = "mock (fallback)"
