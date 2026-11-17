@@ -231,6 +231,11 @@ class GoogleStatusResponse(BaseModel):
     configured: bool
 
 
+class MyPermissionsResponse(BaseModel):
+    role: str
+    permissions: list[str]
+
+
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
@@ -334,6 +339,30 @@ def logout(response: Response) -> dict:
 @router.get("/me", response_model=UserOut)
 def me(current_user: CurrentUser = Depends(get_current_user)) -> UserOut:
     return _user_out(current_user)
+
+
+@router.get("/my-permissions", response_model=MyPermissionsResponse)
+def my_permissions(current_user: CurrentUser = Depends(get_current_user)) -> MyPermissionsResponse:
+    """
+    Self-lookup sibling of admin.list_permissions: any authenticated user
+    (not just admins) can ask what their OWN role currently grants, per the
+    role_permissions table. The frontend uses this to proactively hide/
+    disable controls the user's role doesn't have access to, instead of
+    only finding out via a 403 after clicking.
+    """
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT p.code FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE r.slug = ?
+            ORDER BY p.code
+            """,
+            (current_user.role,),
+        )
+        codes = [row["code"] for row in cur.fetchall()]
+    return MyPermissionsResponse(role=current_user.role, permissions=codes)
 
 
 @router.patch("/me", response_model=UserOut)
