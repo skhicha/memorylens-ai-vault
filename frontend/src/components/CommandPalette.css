@@ -1,9 +1,10 @@
 .cmdk-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(20, 12, 6, 0.55);
+  backdrop-filter: blur(2px);
   z-index: 200;
-  animation: ml-fade-in 0.15s ease;
+  animation: ml-fade-in-backdrop 0.2s ease;
 }
 
 .cmdk-content {
@@ -15,17 +16,26 @@
   max-width: 520px;
   padding: 14px;
   z-index: 201;
-  animation: ml-fade-in 0.15s ease;
+  animation: ml-fade-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes ml-fade-in-backdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes ml-fade-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -6px);
+    transform: translate(-50%, -10px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translate(-50%, 0) scale(1);
   }
 }
 

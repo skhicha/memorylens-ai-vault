@@ -65,6 +65,7 @@ export function MediaCard({
           {media.media_type === "video" ? <Video size={28} /> : <ImageIcon size={28} />}
         </div>
       )}
+      <div className="media-card-vignette" aria-hidden="true" />
 
       {selectable ? (
         <div className={`media-card-select-box${selected ? " checked" : ""}`}>{selected && <Check size={14} />}</div>
