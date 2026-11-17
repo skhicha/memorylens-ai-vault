@@ -86,7 +86,8 @@ export function LibraryPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Library</h1>
+        <span className="eyebrow">Your collection</span>
+        <h1>Library<span className="heading-period">.</span></h1>
         <p>Every photo and video in your vault, with filters for type, tag, and date.</p>
       </div>
 

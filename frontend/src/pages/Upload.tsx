@@ -63,7 +63,8 @@ export function UploadPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Upload media</h1>
+        <span className="eyebrow">Add to the vault</span>
+        <h1>Upload media<span className="heading-period">.</span></h1>
         <p>Drop in photos or videos. MemoryLens AI processes them in the background — faces, transcripts, EXIF/GPS, and tags.</p>
       </div>
 

@@ -20,7 +20,8 @@ export function MapViewPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Map</h1>
+        <span className="eyebrow">Where it happened</span>
+        <h1>Map<span className="heading-period">.</span></h1>
         <p>Photos and videos with GPS data in their EXIF metadata, plotted by location.</p>
       </div>
 

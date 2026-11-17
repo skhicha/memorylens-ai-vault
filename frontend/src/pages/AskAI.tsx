@@ -46,9 +46,10 @@ export function AskAIPage() {
   return (
     <div>
       <div className="page-header">
+        <span className="eyebrow">Ask your vault</span>
         <h1>
           <Sparkles size={22} style={{ verticalAlign: -4, marginRight: 6, color: "var(--accent)" }} />
-          Ask AI
+          Ask AI<span className="heading-period">.</span>
         </h1>
         <p>A retrieval-augmented assistant that only answers from your own vault — every claim is cited.</p>
       </div>

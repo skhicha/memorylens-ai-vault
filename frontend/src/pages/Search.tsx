@@ -66,7 +66,8 @@ export function SearchPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Search</h1>
+        <span className="eyebrow">Find anything</span>
+        <h1>Search<span className="heading-period">.</span></h1>
         <p>Full-text search across filenames, auto-generated tags, and video transcripts.</p>
       </div>
 

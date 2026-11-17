@@ -144,7 +144,8 @@ export function SettingsPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Settings</h1>
+        <span className="eyebrow">Make it yours</span>
+        <h1>Settings<span className="heading-period">.</span></h1>
         <p>Theme, LLM provider status, and index maintenance.</p>
       </div>
 

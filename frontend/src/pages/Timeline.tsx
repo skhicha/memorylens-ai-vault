@@ -35,7 +35,8 @@ export function TimelinePage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Timeline</h1>
+        <span className="eyebrow">Day by day</span>
+        <h1>Timeline<span className="heading-period">.</span></h1>
         <p>Your vault, grouped by the day each item was added.</p>
       </div>
 
