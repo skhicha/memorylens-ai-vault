@@ -228,6 +228,23 @@ export interface AdminStats {
   total_admins: number;
 }
 
+export interface AdminPermission {
+  code: string;
+  resource: string;
+  action: string;
+  description: string | null;
+}
+
+export interface AdminRole {
+  id: number;
+  name: string;
+  slug: "admin" | "editor" | "viewer";
+  description: string | null;
+  is_system: boolean;
+  user_count: number;
+  permissions: string[];
+}
+
 export const api = {
   register(email: string, password: string, display_name: string) {
     return request<AuthResponse>(`/api/auth/register`, {
@@ -362,6 +379,34 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
+    });
+  },
+
+  adminCreateUser(email: string, password: string, display_name: string, role: "admin" | "editor" | "viewer") {
+    return request<AdminUser>(`/api/admin/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, display_name, role }),
+    });
+  },
+
+  adminDeleteUser(id: string) {
+    return request<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" });
+  },
+
+  adminListRoles() {
+    return request<{ roles: AdminRole[] }>(`/api/admin/roles`);
+  },
+
+  adminListPermissions() {
+    return request<{ permissions: AdminPermission[] }>(`/api/admin/permissions`);
+  },
+
+  adminUpdateRolePermissions(roleId: number, permissions: string[]) {
+    return request<AdminRole>(`/api/admin/roles/${roleId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permissions }),
     });
   },
 
