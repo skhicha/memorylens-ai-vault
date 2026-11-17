@@ -211,6 +211,11 @@ export interface GoogleStatus {
   configured: boolean;
 }
 
+export interface MyPermissionsResponse {
+  role: string;
+  permissions: string[];
+}
+
 export interface AdminUser {
   id: string;
   email: string;
@@ -356,6 +361,10 @@ export const api = {
 
   me() {
     return request<AuthUser>(`/api/auth/me`);
+  },
+
+  myPermissions() {
+    return request<MyPermissionsResponse>(`/api/auth/my-permissions`);
   },
 
   adminListUsers() {

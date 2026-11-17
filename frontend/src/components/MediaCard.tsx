@@ -26,8 +26,8 @@ export function MediaCard({
   onFavoriteChange?: (isFavorite: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canEdit = user?.role !== "viewer";
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission("media.edit");
   const [favorite, setFavorite] = useState(media.is_favorite);
   const [favBusy, setFavBusy] = useState(false);
 

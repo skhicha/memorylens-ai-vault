@@ -28,7 +28,7 @@ const LINKS = [
 ];
 
 export function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
   const navigate = useNavigate();
 
   const onLogout = async () => {
@@ -49,7 +49,7 @@ export function Navbar() {
       </div>
 
       <div className="navbar-links">
-        {LINKS.filter(({ to }) => to !== "/upload" || user?.role !== "viewer").map(({ to, label, icon: Icon }) => (
+        {LINKS.filter(({ to }) => to !== "/upload" || hasPermission("media.upload")).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

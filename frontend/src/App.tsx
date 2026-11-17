@@ -44,7 +44,7 @@ function AppShell() {
           <Route
             path="/upload"
             element={
-              <ProtectedRoute blockRoles={["viewer"]}>
+              <ProtectedRoute blockRoles={["viewer"]} requirePermission="media.upload">
                 <UploadPage />
               </ProtectedRoute>
             }

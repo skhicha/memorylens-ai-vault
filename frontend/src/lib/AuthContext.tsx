@@ -22,6 +22,8 @@ export type LoginOutcome =
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
+  permissions: string[];
+  hasPermission: (code: string) => boolean;
   login: (email: string, password: string) => Promise<LoginOutcome>;
   completeOtpLogin: (otpToken: string, code: string) => Promise<void>;
   resendOtp: (otpToken: string) => Promise<void>;
@@ -34,8 +36,23 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// Fetches the current user's permission list, best-effort. Used right
+// after every place a user is set, so `permissions` always matches
+// whichever user is currently logged in. Failure here shouldn't block
+// login -- it just means permission-gated UI falls back to hidden until
+// the next successful fetch (e.g. on reload).
+async function fetchPermissions(): Promise<string[]> {
+  try {
+    const res = await api.myPermissions();
+    return res.permissions;
+  } catch {
+    return [];
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const initialized = useRef(false);
 
@@ -52,11 +69,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(res.access_token);
         localStorage.setItem(STORAGE_KEY, res.access_token);
         setUser(res.user);
+        fetchPermissions().then(setPermissions);
         return res.access_token;
       } catch {
         setAccessToken(null);
         localStorage.removeItem(STORAGE_KEY);
         setUser(null);
+        setPermissions([]);
         return null;
       }
     });
@@ -66,7 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccessToken(stored);
       api
         .me()
-        .then(setUser)
+        .then((u) => {
+          setUser(u);
+          return fetchPermissions().then(setPermissions);
+        })
         .catch(() => {
           setAccessToken(null);
           localStorage.removeItem(STORAGE_KEY);
@@ -88,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(res.access_token);
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
+    setPermissions(await fetchPermissions());
     return { status: "logged_in" };
   };
 
@@ -96,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(res.access_token);
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
+    setPermissions(await fetchPermissions());
   };
 
   const resendOtp = async (otpToken: string) => {
@@ -107,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(res.access_token);
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
+    setPermissions(await fetchPermissions());
   };
 
   // Used by the Google OAuth callback page: the backend redirect only
@@ -118,11 +143,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, accessToken);
     const fresh = await api.me();
     setUser(fresh);
+    setPermissions(await fetchPermissions());
   };
 
   const refreshUser = async () => {
     const fresh = await api.me();
     setUser(fresh);
+    setPermissions(await fetchPermissions());
   };
 
   const register = async (email: string, password: string, displayName: string) => {
@@ -130,6 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(res.access_token);
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
+    setPermissions(await fetchPermissions());
   };
 
   const logout = async () => {
@@ -141,13 +169,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(null);
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
+    setPermissions([]);
   };
+
+  const hasPermission = (code: string) => permissions.includes(code);
 
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
+        permissions,
+        hasPermission,
         login,
         completeOtpLogin,
         resendOtp,

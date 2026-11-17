@@ -6,12 +6,17 @@ export function ProtectedRoute({
   children,
   requireAdmin = false,
   blockRoles = [],
+  requirePermission,
 }: {
   children: ReactNode;
   requireAdmin?: boolean;
   blockRoles?: string[];
+  /** Authoritative permission check. When given, takes precedence over
+   * blockRoles once permissions have loaded; blockRoles stays as a
+   * first-line fallback for the render before that fetch resolves. */
+  requirePermission?: string;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, permissions, hasPermission } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -27,6 +32,10 @@ export function ProtectedRoute({
   }
 
   if (blockRoles.includes(user.role)) {
+    return <Navigate to="/library" replace />;
+  }
+
+  if (requirePermission && permissions.length > 0 && !hasPermission(requirePermission)) {
     return <Navigate to="/library" replace />;
   }
 

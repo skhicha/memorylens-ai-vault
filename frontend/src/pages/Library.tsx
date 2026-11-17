@@ -7,8 +7,8 @@ import { useAuth } from "../lib/AuthContext";
 import "./Library.css";
 
 export function LibraryPage() {
-  const { user } = useAuth();
-  const canEdit = user?.role !== "viewer";
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission("media.delete");
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaType, setMediaType] = useState<MediaType | "">("");
