@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   api,
   getAccessToken,
@@ -31,6 +32,7 @@ interface AuthContextValue {
   completeOAuthLogin: (accessToken: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   logout: () => Promise<void>;
+  logoutOtherDevices: () => Promise<number>;
   refreshUser: () => Promise<void>;
 }
 
@@ -55,6 +57,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const initialized = useRef(false);
+  const navigate = useNavigate();
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Subscribes this tab to /api/auth/events (SSE), keyed by the current
+  // access token's embedded session id. When another device logs this
+  // account out (an explicit logout-elsewhere, "log out all other
+  // devices", or an admin deactivating/deleting the account), the backend
+  // pushes a "logout" event here immediately -- no polling, no refresh
+  // needed -- and this tab clears its own auth state and redirects.
+  const subscribeToSessionEvents = (accessToken: string) => {
+    eventSourceRef.current?.close();
+    const es = new EventSource(`/api/auth/events?token=${encodeURIComponent(accessToken)}`);
+    es.addEventListener("logout", () => {
+      es.close();
+      eventSourceRef.current = null;
+      setAccessToken(null);
+      localStorage.removeItem(STORAGE_KEY);
+      setUser(null);
+      setPermissions([]);
+      navigate("/login", { replace: true, state: { sessionRevoked: true } });
+    });
+    es.onerror = () => {
+      // Transient network blip or the connection simply expired -- the
+      // browser's own EventSource auto-reconnect handles that; nothing to
+      // do here except let it retry.
+    };
+    eventSourceRef.current = es;
+  };
+
+  const unsubscribeFromSessionEvents = () => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+  };
 
   useEffect(() => {
     if (initialized.current) return;
@@ -70,12 +105,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem(STORAGE_KEY, res.access_token);
         setUser(res.user);
         fetchPermissions().then(setPermissions);
+        subscribeToSessionEvents(res.access_token);
         return res.access_token;
       } catch {
         setAccessToken(null);
         localStorage.removeItem(STORAGE_KEY);
         setUser(null);
         setPermissions([]);
+        unsubscribeFromSessionEvents();
         return null;
       }
     });
@@ -87,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .me()
         .then((u) => {
           setUser(u);
+          subscribeToSessionEvents(stored);
           return fetchPermissions().then(setPermissions);
         })
         .catch(() => {
@@ -97,6 +135,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setLoading(false);
     }
+
+    return () => unsubscribeFromSessionEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const login = async (email: string, password: string): Promise<LoginOutcome> => {
@@ -111,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
     setPermissions(await fetchPermissions());
+    subscribeToSessionEvents(res.access_token);
     return { status: "logged_in" };
   };
 
@@ -120,6 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
     setPermissions(await fetchPermissions());
+    subscribeToSessionEvents(res.access_token);
   };
 
   const resendOtp = async (otpToken: string) => {
@@ -132,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
     setPermissions(await fetchPermissions());
+    subscribeToSessionEvents(res.access_token);
   };
 
   // Used by the Google OAuth callback page: the backend redirect only
@@ -144,6 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const fresh = await api.me();
     setUser(fresh);
     setPermissions(await fetchPermissions());
+    subscribeToSessionEvents(accessToken);
   };
 
   const refreshUser = async () => {
@@ -158,9 +203,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, res.access_token);
     setUser(res.user);
     setPermissions(await fetchPermissions());
+    subscribeToSessionEvents(res.access_token);
   };
 
   const logout = async () => {
+    // Close our own SSE connection BEFORE revoking the session server-side --
+    // otherwise the revoke's own "logout" push can race back to this same
+    // tab's listener and overwrite whatever redirect reason the caller
+    // (e.g. idle-timeout) is about to navigate with.
+    unsubscribeFromSessionEvents();
     try {
       await api.logout();
     } catch {
@@ -170,6 +221,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
     setPermissions([]);
+  };
+
+  const logoutOtherDevices = async (): Promise<number> => {
+    const res = await api.logoutOtherDevices();
+    return res.revoked_count;
   };
 
   const hasPermission = (code: string) => permissions.includes(code);
@@ -188,6 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         completeOAuthLogin,
         register,
         logout,
+        logoutOtherDevices,
         refreshUser,
       }}
     >

@@ -95,13 +95,17 @@ export function LoginPage() {
     window.location.href = "/api/auth/google/login";
   };
 
-  const locationState = location.state as { from?: string; resetSuccess?: boolean } | null;
+  const locationState = location.state as
+    | { from?: string; resetSuccess?: boolean; idleLoggedOut?: boolean; sessionRevoked?: boolean }
+    | null;
   const from = locationState?.from ?? "/library";
   // Captured once on mount so the banner survives this single render pass;
   // the router state itself is cleared right after so a later back/forward
   // navigation to this same history entry, or any subsequent unrelated
   // login attempt, doesn't resurrect it.
   const [resetSuccess] = useState(() => locationState?.resetSuccess ?? false);
+  const [idleLoggedOut] = useState(() => locationState?.idleLoggedOut ?? false);
+  const [sessionRevoked] = useState(() => locationState?.sessionRevoked ?? false);
 
   useEffect(() => {
     return () => {
@@ -303,6 +307,14 @@ export function LoginPage() {
         <p className="auth-subtitle">Sign in to your MemoryLens AI vault.</p>
 
         {resetSuccess && <div className="auth-success">Password reset. Sign in with your new password.</div>}
+        {idleLoggedOut && (
+          <div className="auth-success">You were logged out after a period of inactivity. Please sign in again.</div>
+        )}
+        {sessionRevoked && (
+          <div className="auth-success">
+            You were logged out because this session ended on another device.
+          </div>
+        )}
         {googleError && (
           <div className="auth-error">{GOOGLE_ERROR_MESSAGES[googleError] ?? "Google sign-in failed."}</div>
         )}

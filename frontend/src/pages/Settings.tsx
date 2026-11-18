@@ -1,14 +1,28 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, ShieldCheck, Sparkles, KeyRound } from "lucide-react";
-import { api, type SettingsInfo } from "../lib/api";
+import { api, type SessionInfo, type SettingsInfo } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { ThemeToggle } from "../components/ThemeToggle";
 
 type MfaStep = "idle" | "setup" | "backup-codes";
 
+// sessions.created_at comes from SQLite's datetime('now') -- "YYYY-MM-DD
+// HH:MM:SS" in UTC with no timezone suffix, so it must be parsed as UTC
+// explicitly (new Date("...") with a space instead of "T" and no "Z"
+// would otherwise be parsed as local time by most browsers).
+function formatSessionDate(createdAt: string): string {
+  const iso = createdAt.includes("T") ? createdAt : `${createdAt.replace(" ", "T")}Z`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return createdAt;
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export function SettingsPage() {
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, logoutOtherDevices } = useAuth();
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+  const [logoutOthersBusy, setLogoutOthersBusy] = useState(false);
+  const [logoutOthersMsg, setLogoutOthersMsg] = useState<string | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [reindexMsg, setReindexMsg] = useState<string | null>(null);
   const [otpSaving, setOtpSaving] = useState(false);
@@ -31,7 +45,22 @@ export function SettingsPage() {
 
   useEffect(() => {
     api.settings().then(setSettings);
+    api.mySessions().then(setSessions).catch(() => setSessions([]));
   }, []);
+
+  const handleLogoutOthers = async () => {
+    setLogoutOthersBusy(true);
+    setLogoutOthersMsg(null);
+    try {
+      const count = await logoutOtherDevices();
+      setLogoutOthersMsg(count > 0 ? `Signed out ${count} other device${count === 1 ? "" : "s"}.` : "No other devices were signed in.");
+      api.mySessions().then(setSessions).catch(() => {});
+    } catch {
+      setLogoutOthersMsg("Something went wrong — please try again.");
+    } finally {
+      setLogoutOthersBusy(false);
+    }
+  };
 
   const toggleOtp = async () => {
     if (!user) return;
@@ -257,6 +286,47 @@ export function SettingsPage() {
               </button>
             </div>
             {otpMsg && <div style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{otpMsg}</div>}
+          </div>
+        </div>
+
+        <div className="glass-card" style={{ padding: 20 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-muted)", textTransform: "uppercase" }}>
+            <ShieldCheck size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
+            Sessions
+          </h3>
+          <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+            {sessions === null ? (
+              <p style={{ margin: "0 0 10px", color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
+            ) : (
+              <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                {sessions.map((s) => (
+                  <li
+                    key={s.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      fontSize: 13,
+                      gap: 10,
+                    }}
+                  >
+                    <span>
+                      {s.device_label || "Unknown device"}
+                      {s.is_current && <span style={{ color: "var(--accent)", fontWeight: 600 }}> (this device)</span>}
+                    </span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                      signed in {formatSessionDate(s.created_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button className="btn" onClick={handleLogoutOthers} disabled={logoutOthersBusy || !sessions || sessions.length <= 1}>
+              {logoutOthersBusy ? "Signing out other devices…" : "Log out all other devices"}
+            </button>
+            {logoutOthersMsg && (
+              <div style={{ fontSize: 13, color: "var(--success)", marginTop: 10 }}>{logoutOthersMsg}</div>
+            )}
           </div>
         </div>
 

@@ -40,6 +40,19 @@ export function LibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaType, tag, dateFrom, dateTo]);
 
+  // Media that was already "pending"/"processing" when this page loaded
+  // (including right after a full browser refresh, which always kills any
+  // literally-mid-HTTP-request upload but never the server-side row it
+  // already created) needs its own refetch loop -- otherwise its status
+  // pill would stay stuck until the user manually refreshes again.
+  useEffect(() => {
+    const hasUnsettled = items.some((i) => i.status !== "ready" && i.status !== "failed");
+    if (!hasUnsettled) return;
+    const interval = setInterval(load, 4000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+
   const allTags = useMemo(() => {
     const s = new Set<string>();
     items.forEach((i) => i.tags.forEach((t) => s.add(t)));

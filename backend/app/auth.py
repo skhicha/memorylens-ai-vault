@@ -13,8 +13,20 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.db import db_cursor
+from app.services import sessions
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-insecure-secret-change-me")
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    # No hardcoded fallback: a shared default secret across machines/
+    # checkouts would let a JWT signed on one machine be accepted as valid
+    # on another even against a completely different (e.g. freshly wiped)
+    # database, since token *signature* validity and the DB-identity check
+    # in get_current_user are two independent things. Fail loudly instead.
+    raise RuntimeError(
+        "JWT_SECRET environment variable is not set. Refusing to start with an "
+        "insecure default signing secret -- set JWT_SECRET in backend/.env "
+        "(generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\")."
+    )
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60
 REFRESH_TOKEN_DAYS = 7
@@ -32,7 +44,9 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def _create_token(user_id: str, token_type: str, expires_delta: timedelta) -> str:
+def _create_token(
+    user_id: str, token_type: str, expires_delta: timedelta, session_id: Optional[str] = None
+) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
@@ -40,15 +54,17 @@ def _create_token(user_id: str, token_type: str, expires_delta: timedelta) -> st
         "iat": now,
         "exp": now + expires_delta,
     }
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def create_access_token(user_id: str) -> str:
-    return _create_token(user_id, "access", timedelta(minutes=ACCESS_TOKEN_MINUTES))
+def create_access_token(user_id: str, session_id: Optional[str] = None) -> str:
+    return _create_token(user_id, "access", timedelta(minutes=ACCESS_TOKEN_MINUTES), session_id)
 
 
-def create_refresh_token(user_id: str) -> str:
-    return _create_token(user_id, "refresh", timedelta(days=REFRESH_TOKEN_DAYS))
+def create_refresh_token(user_id: str, session_id: Optional[str] = None) -> str:
+    return _create_token(user_id, "refresh", timedelta(days=REFRESH_TOKEN_DAYS), session_id)
 
 
 def create_otp_token(user_id: str) -> str:
@@ -70,17 +86,20 @@ def create_oauth_state_token() -> str:
     return _create_token("google-oauth", "oauth_state", timedelta(minutes=OAUTH_STATE_MINUTES))
 
 
-def decode_token(token: str, expected_type: str) -> str:
+def decode_token_payload(token: str, expected_type: str) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         raise HTTPException(401, "Invalid or expired token")
     if payload.get("type") != expected_type:
         raise HTTPException(401, "Invalid token type")
-    sub = payload.get("sub")
-    if not sub:
+    if not payload.get("sub"):
         raise HTTPException(401, "Invalid token")
-    return sub
+    return payload
+
+
+def decode_token(token: str, expected_type: str) -> str:
+    return decode_token_payload(token, expected_type)["sub"]
 
 
 class CurrentUser:
@@ -103,6 +122,7 @@ class CurrentUser:
         self.otp_enabled = otp_enabled
         self.mfa_enabled = mfa_enabled
         self.is_active = is_active
+        self.session_id: Optional[str] = None
 
 
 def get_user_by_id(user_id: str) -> Optional[CurrentUser]:
@@ -141,7 +161,9 @@ def get_current_user(
         raw_token = token
     else:
         raise HTTPException(401, "Missing or invalid access token")
-    user_id = decode_token(raw_token, "access")
+    payload = decode_token_payload(raw_token, "access")
+    user_id = payload["sub"]
+    session_id = payload.get("sid")
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(401, "User not found")
@@ -151,17 +173,38 @@ def get_current_user(
         # deactivates the account -- so every protected request re-checks
         # is_active against the DB rather than trusting the token alone.
         raise HTTPException(403, "Your account has been deactivated. Contact an administrator.")
+    if not sessions.is_session_valid(session_id):
+        # Logged out (or revoked by an admin) from this device specifically,
+        # on another request/connection -- see app/services/sessions.py.
+        raise HTTPException(401, "This session has been logged out")
+    user.session_id = session_id
     return user
 
 
 def get_refresh_user_id(refresh_token: Optional[str] = Cookie(None)) -> str:
     if not refresh_token:
         raise HTTPException(401, "Missing refresh token")
-    user_id = decode_token(refresh_token, "refresh")
+    payload = decode_token_payload(refresh_token, "refresh")
+    user_id = payload["sub"]
     user = get_user_by_id(user_id)
     if not user or not user.is_active:
         raise HTTPException(401, "User not found")
+    if not sessions.is_session_valid(payload.get("sid")):
+        raise HTTPException(401, "This session has been logged out")
     return user_id
+
+
+def get_refresh_session_id(refresh_token: Optional[str] = Cookie(None)) -> Optional[str]:
+    """Same decode as get_refresh_user_id but returns the embedded session
+    id instead, for routes (logout, refresh rotation) that need to revoke
+    or rotate the specific session rather than just identify the user."""
+    if not refresh_token:
+        return None
+    try:
+        payload = decode_token_payload(refresh_token, "refresh")
+    except HTTPException:
+        return None
+    return payload.get("sid")
 
 
 def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

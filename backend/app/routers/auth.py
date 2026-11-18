@@ -1,11 +1,12 @@
+import asyncio
 import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -19,13 +20,14 @@ from app.auth import (
     create_refresh_token,
     decode_token,
     get_current_user,
+    get_refresh_session_id,
     get_refresh_user_id,
     get_user_by_id,
     hash_password,
     verify_password,
 )
 from app.db import db_cursor
-from app.services import mailer, mfa, oauth_google, otp
+from app.services import mailer, mfa, oauth_google, otp, sessions
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
@@ -270,8 +272,9 @@ def register(req: RegisterRequest, request: Request, response: Response) -> Auth
         f"Your verification code is {code}. It expires in {RESET_EXPIRE_MINUTES * 2} minutes.",
     )
 
-    access = create_access_token(user_id)
-    refresh = create_refresh_token(user_id)
+    session_id = sessions.create_session(user_id, sessions.label_from_user_agent(request.headers.get("user-agent")))
+    access = create_access_token(user_id, session_id)
+    refresh = create_refresh_token(user_id, session_id)
     _set_refresh_cookie(response, refresh)
     return AuthResponse(
         access_token=access,
@@ -313,27 +316,106 @@ def login(req: LoginRequest, request: Request, response: Response):
         otp_token = create_otp_token(row["id"])
         return OtpRequiredResponse(otp_token=otp_token)
 
-    access = create_access_token(row["id"])
-    refresh = create_refresh_token(row["id"])
+    session_id = sessions.create_session(row["id"], sessions.label_from_user_agent(request.headers.get("user-agent")))
+    access = create_access_token(row["id"], session_id)
+    refresh = create_refresh_token(row["id"], session_id)
     _set_refresh_cookie(response, refresh)
     return AuthResponse(access_token=access, user=_user_out(row))
 
 
 @router.post("/refresh", response_model=AuthResponse)
-def refresh(response: Response, user_id: str = Depends(get_refresh_user_id)) -> AuthResponse:
+def refresh(
+    response: Response,
+    user_id: str = Depends(get_refresh_user_id),
+    session_id: Optional[str] = Depends(get_refresh_session_id),
+) -> AuthResponse:
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(401, "User not found")
-    access = create_access_token(user.id)
-    new_refresh = create_refresh_token(user.id)
+    # Rotates the refresh token's VALUE on every use (while keeping the
+    # same underlying session row/id, so "active sessions" stays stable
+    # per device) -- limits how useful a leaked/replayed old refresh token
+    # is, since the next legitimate refresh already moved past it.
+    access = create_access_token(user.id, session_id)
+    new_refresh = create_refresh_token(user.id, session_id)
     _set_refresh_cookie(response, new_refresh)
     return AuthResponse(access_token=access, user=_user_out(user))
 
 
 @router.post("/logout")
-def logout(response: Response) -> dict:
+def logout(response: Response, session_id: Optional[str] = Depends(get_refresh_session_id)) -> dict:
+    if session_id:
+        sessions.revoke_session(session_id)
     response.delete_cookie(REFRESH_COOKIE_NAME, path="/")
     return {"ok": True}
+
+
+class SessionOut(BaseModel):
+    id: str
+    device_label: Optional[str] = None
+    created_at: str
+    is_current: bool
+
+
+@router.get("/sessions", response_model=list[SessionOut])
+def list_my_sessions(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[SessionOut]:
+    rows = sessions.list_sessions(current_user.id)
+    return [
+        SessionOut(
+            id=row["id"],
+            device_label=row["device_label"],
+            created_at=row["created_at"],
+            is_current=row["id"] == current_user.session_id,
+        )
+        for row in rows
+        if row["revoked_at"] is None
+    ]
+
+
+@router.post("/sessions/logout-others")
+def logout_other_devices(current_user: CurrentUser = Depends(get_current_user)) -> dict:
+    revoked = sessions.revoke_all_sessions_for_user(current_user.id, except_session_id=current_user.session_id)
+    return {"ok": True, "revoked_count": len(revoked)}
+
+
+@router.get("/events")
+async def auth_events(token: str) -> StreamingResponse:
+    """
+    Server-Sent Events stream for cross-device logout: one open connection
+    per logged-in browser tab, keyed by this login's session id (embedded
+    in the access token passed as ?token=, since EventSource can't set an
+    Authorization header). When this specific session is revoked -- by
+    logging out on another tab/device, by "log out all other devices", or
+    by an admin deactivating/deleting the account -- a "logout" event is
+    pushed here immediately; see app/services/sessions.py.
+    """
+    from app.auth import decode_token_payload  # local import avoids a cycle at module load time
+
+    payload = decode_token_payload(token, "access")
+    session_id = payload.get("sid")
+    if not session_id:
+        raise HTTPException(400, "This token has no session to subscribe to")
+    if not sessions.is_session_valid(session_id):
+        raise HTTPException(401, "This session has been logged out")
+
+    async def event_stream() -> AsyncIterator[str]:
+        queue = sessions.subscribe(session_id)
+        try:
+            yield "event: ping\ndata: connected\n\n"
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20)
+                    yield f"event: {event}\ndata: {event}\n\n"
+                    if event == "logout":
+                        break
+                except asyncio.TimeoutError:
+                    yield "event: ping\ndata: keepalive\n\n"
+        finally:
+            sessions.unsubscribe(session_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/me", response_model=UserOut)
@@ -386,8 +468,9 @@ def otp_verify(req: OtpVerifyRequest, request: Request, response: Response) -> A
     if not _verify_and_consume_code(user_id, "login", req.code):
         raise HTTPException(401, "Invalid or expired code")
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
+    session_id = sessions.create_session(user.id, sessions.label_from_user_agent(request.headers.get("user-agent")))
+    access = create_access_token(user.id, session_id)
+    refresh = create_refresh_token(user.id, session_id)
     _set_refresh_cookie(response, refresh)
     return AuthResponse(
         access_token=access,
@@ -496,8 +579,9 @@ def mfa_verify(req: MfaVerifyRequest, request: Request, response: Response) -> A
     if not ok:
         raise HTTPException(401, "Invalid code")
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
+    session_id = sessions.create_session(user.id, sessions.label_from_user_agent(request.headers.get("user-agent")))
+    access = create_access_token(user.id, session_id)
+    refresh = create_refresh_token(user.id, session_id)
     _set_refresh_cookie(response, refresh)
     return AuthResponse(access_token=access, user=_user_out(user))
 
@@ -576,7 +660,9 @@ def google_login():
 
 
 @router.get("/google/callback")
-def google_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+def google_callback(
+    request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None
+):
     if error or not code or not state:
         return RedirectResponse(f"{FRONTEND_URL}/login?google_error=denied")
 
@@ -627,8 +713,9 @@ def google_callback(code: Optional[str] = None, state: Optional[str] = None, err
                 (user_id, email, hash_password(uuid.uuid4().hex), display_name, role, google_sub),
             )
 
-    access = create_access_token(user_id)
-    refresh = create_refresh_token(user_id)
+    session_id = sessions.create_session(user_id, sessions.label_from_user_agent(request.headers.get("user-agent")))
+    access = create_access_token(user_id, session_id)
+    refresh = create_refresh_token(user_id, session_id)
     redirect = RedirectResponse(f"{FRONTEND_URL}/oauth/callback?token={access}")
     _set_refresh_cookie(redirect, refresh)
     return redirect

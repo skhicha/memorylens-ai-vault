@@ -175,6 +175,13 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export interface SessionInfo {
+  id: string;
+  device_label: string | null;
+  created_at: string;
+  is_current: boolean;
+}
+
 export interface OtpRequiredResponse {
   otp_required: true;
   otp_token: string;
@@ -252,19 +259,36 @@ export interface AdminRole {
 
 export const api = {
   register(email: string, password: string, display_name: string) {
-    return request<AuthResponse>(`/api/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, display_name }),
-    });
+    // skipRetry: this is an unauthenticated endpoint. A 401 here (which
+    // register shouldn't normally return, but defensively) must never
+    // trigger the generic refresh-and-retry -- that path is only correct
+    // for an already-logged-in request whose access token expired.
+    return request<AuthResponse>(
+      `/api/auth/register`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, display_name }),
+      },
+      true,
+    );
   },
 
   login(email: string, password: string) {
-    return request<LoginResult>(`/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    // skipRetry: a wrong-password 401 must surface as a login error, not
+    // trigger the generic refresh-and-retry -- without this, a stale
+    // refresh cookie from a PREVIOUS account's session on this browser
+    // silently logs the user back into that old account instead of
+    // showing "invalid email or password" for the one they just typed.
+    return request<LoginResult>(
+      `/api/auth/login`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      },
+      true,
+    );
   },
 
   otpVerify(otp_token: string, code: string) {
@@ -365,6 +389,16 @@ export const api = {
 
   myPermissions() {
     return request<MyPermissionsResponse>(`/api/auth/my-permissions`);
+  },
+
+  mySessions() {
+    return request<SessionInfo[]>(`/api/auth/sessions`);
+  },
+
+  logoutOtherDevices() {
+    return request<{ ok: boolean; revoked_count: number }>(`/api/auth/sessions/logout-others`, {
+      method: "POST",
+    });
   },
 
   adminListUsers() {

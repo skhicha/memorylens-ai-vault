@@ -121,6 +121,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
     text
 );
 
+-- One row per logged-in browser/device. The session's id is embedded as
+-- the "sid" claim in that login's access+refresh JWTs, so an otherwise
+-- stateless, still-unexpired JWT can still be invalidated instantly: logout
+-- (or an admin deactivating/deleting the user) sets revoked_at, and every
+-- request re-checks the row (see app/auth.py get_current_user), while the
+-- SSE stream in app/services/sessions.py pushes an immediate "logout" event
+-- to that specific device so it doesn't have to wait for its next request.
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_label TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 -- RBAC: roles/permissions live alongside the existing `users.role` TEXT
 -- column rather than replacing it. `users.role` remains the source of
 -- truth for "which role slug a user has" (so existing login/require_role

@@ -1,11 +1,16 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useCallback } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Navbar } from "./components/Navbar";
 import { CommandPalette } from "./components/CommandPalette";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { VerifyEmailBanner } from "./components/VerifyEmailBanner";
 import { JustRegisteredToast } from "./components/JustRegisteredToast";
+import { IdleWarningModal } from "./components/IdleWarningModal";
+import { UploadsTray } from "./components/UploadsTray";
+import { useIdleTimeout } from "./hooks/useIdleTimeout";
 import { AuthProvider } from "./lib/AuthContext";
 import { useAuth } from "./lib/AuthContext";
+import { UploadStoreProvider } from "./lib/UploadStore";
 import { LoginPage } from "./pages/Login";
 import { RegisterPage } from "./pages/Register";
 import { ForgotPasswordPage } from "./pages/ForgotPassword";
@@ -24,14 +29,24 @@ import { AdminPage } from "./pages/Admin";
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/oauth/callback"];
 
 function AppShell() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const isAuthRoute = AUTH_ROUTES.includes(location.pathname);
   const showShell = !!user && !isAuthRoute;
+
+  const handleIdleTimeout = useCallback(() => {
+    logout().finally(() => navigate("/login", { replace: true, state: { idleLoggedOut: true } }));
+  }, [logout, navigate]);
+
+  const { warning, stayActive } = useIdleTimeout(!!user, handleIdleTimeout);
+
   return (
     <div className="app-shell">
       {showShell && <Navbar />}
       {showShell && <CommandPalette />}
+      {!!user && warning && <IdleWarningModal onStayActive={stayActive} />}
+      {showShell && <UploadsTray />}
       <main className={isAuthRoute ? "app-main app-main-auth" : "app-main"}>
         {showShell && <JustRegisteredToast />}
         {showShell && <VerifyEmailBanner />}
@@ -131,7 +146,9 @@ function AppShell() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppShell />
+      <UploadStoreProvider>
+        <AppShell />
+      </UploadStoreProvider>
     </AuthProvider>
   );
 }

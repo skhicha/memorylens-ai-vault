@@ -13,6 +13,7 @@ from pydantic import BaseModel, EmailStr
 
 from app.auth import CurrentUser, hash_password, require_admin
 from app.db import db_cursor
+from app.services import sessions
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -174,6 +175,9 @@ def deactivate_user(user_id: str, current_user: CurrentUser = Depends(require_ad
         if not cur.fetchone():
             raise HTTPException(404, "User not found")
         cur.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+    # Every device this user is currently logged in on should be kicked out
+    # immediately, not merely once its access token happens to expire.
+    sessions.revoke_all_sessions_for_user(user_id)
     return {"ok": True}
 
 
@@ -234,6 +238,11 @@ def update_user(
             (user_id,),
         )
         out = cur.fetchone()
+    if not new_active:
+        # Outside the above `with` block: that transaction must commit
+        # first, since this opens its own connection and would otherwise
+        # hit SQLite's write lock while the outer one is still open.
+        sessions.revoke_all_sessions_for_user(user_id)
     return AdminUserOut(
         id=out["id"],
         email=out["email"],
@@ -262,6 +271,13 @@ def delete_user(user_id: str, current_user: CurrentUser = Depends(require_admin)
         for m in media_rows:
             cur.execute("DELETE FROM search_index WHERE media_id = ?", (m["id"],))
         cur.execute("DELETE FROM media WHERE user_id = ?", (user_id,))
+
+    # Revoke (and SSE-notify) active sessions BEFORE deleting the user row,
+    # since sessions.user_id cascades on delete -- after that the rows (and
+    # any way to look them up to notify their SSE connections) are gone.
+    sessions.revoke_all_sessions_for_user(user_id)
+
+    with db_cursor() as cur:
         # otp_codes / mfa_backup_codes have ON DELETE CASCADE on user_id, so
         # deleting the user row cleans those up automatically; media has no
         # such cascade (users.id has other referrers too), hence the manual
