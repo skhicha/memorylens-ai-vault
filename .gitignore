@@ -27,6 +27,9 @@ demo-media-for-reupload.zip
 # Docs folder (local only, not for GitHub)
 docs/
 
+# Data snapshots (archived synthetic + curated real-world test data) - local only
+backend/data_snapshots/
+
 # Editor / OS cruft
 .DS_Store
 .vscode/
