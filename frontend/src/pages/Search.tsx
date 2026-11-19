@@ -109,7 +109,11 @@ export function SearchPage() {
           <div
             key={`${r.media_id}-${i}`}
             className="search-result"
-            onClick={() => navigate(`/media/${r.media_id}`)}
+            onClick={() =>
+              navigate(
+                r.segment_start !== null ? `/media/${r.media_id}?t=${r.segment_start}` : `/media/${r.media_id}`
+              )
+            }
           >
             {r.thumb_url ? (
               <img className="search-result-thumb" src={withAuth(r.thumb_url)} alt="" />

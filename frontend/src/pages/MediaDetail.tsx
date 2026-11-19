@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Trash2, MapPin, Camera, Clock3 } from "lucide-react";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -17,6 +17,14 @@ export function MediaDetailPage() {
   const [media, setMedia] = useState<MediaDetailType | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [searchParams] = useSearchParams();
+  // Coming from a Search result for a specific transcript line (or a
+  // citation chip from Ask AI) carries ?t=<seconds> -- captured once on
+  // mount, before the video element exists, so it survives until the
+  // video is actually ready to seek.
+  const pendingSeek = useRef<number | null>(
+    searchParams.has("t") ? Number(searchParams.get("t")) : null
+  );
 
   useEffect(() => {
     if (!id) return;
@@ -29,6 +37,16 @@ export function MediaDetailPage() {
     if (videoRef.current) {
       videoRef.current.currentTime = t;
       videoRef.current.play().catch(() => {});
+    }
+  };
+
+  // The <video> element only exists once `media` has loaded, and
+  // currentTime can't be set reliably until the browser has loaded enough
+  // of the file to know its duration -- onLoadedMetadata is that signal.
+  const onVideoReady = () => {
+    if (pendingSeek.current !== null) {
+      seekTo(pendingSeek.current);
+      pendingSeek.current = null;
     }
   };
 
@@ -78,7 +96,7 @@ export function MediaDetailPage() {
                 )}
               </>
             ) : (
-              <video ref={videoRef} src={api.mediaFileUrl(media.id)} controls />
+              <video ref={videoRef} src={api.mediaFileUrl(media.id)} controls onLoadedMetadata={onVideoReady} />
             )}
           </div>
 

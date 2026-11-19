@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { UploadCloud, CheckCircle2, RotateCcw } from "lucide-react";
 import { withAuth } from "../lib/api";
 import { useUploadStore, ACCEPTED_EXT } from "../lib/UploadStore";
@@ -8,6 +9,19 @@ export function UploadPage() {
   const { items, enqueueFiles, retry } = useUploadStore();
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
+  // Uploads are tracked in the global store (UploadStoreProvider, mounted at
+  // the app root), not in this page's own state -- they keep running, and
+  // the floating UploadsTray keeps showing them, regardless of which page
+  // is open. So once files are queued there's nothing left for the user to
+  // watch here that the tray doesn't already show from anywhere else in the
+  // app, and heading straight to Library (where the new items will appear
+  // as they finish processing) is more useful than staying on this page.
+  const enqueueAndGoToLibrary = (files: FileList) => {
+    enqueueFiles(files);
+    navigate("/library");
+  };
 
   return (
     <div>
@@ -31,7 +45,7 @@ export function UploadPage() {
         onDrop={(e) => {
           e.preventDefault();
           setDragActive(false);
-          if (e.dataTransfer.files.length) enqueueFiles(e.dataTransfer.files);
+          if (e.dataTransfer.files.length) enqueueAndGoToLibrary(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
       >
@@ -46,7 +60,7 @@ export function UploadPage() {
           multiple
           accept={ACCEPTED_EXT.join(",")}
           style={{ display: "none" }}
-          onChange={(e) => e.target.files && enqueueFiles(e.target.files)}
+          onChange={(e) => e.target.files && enqueueAndGoToLibrary(e.target.files)}
         />
       </div>
 

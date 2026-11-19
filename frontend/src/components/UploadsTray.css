@@ -5,12 +5,20 @@
   z-index: 900;
   width: 320px;
   max-width: calc(100vw - 32px);
-  background: var(--surface, #1e1e1e);
+  /* --surface is a near-transparent tint meant to be paired with a blur
+     (see .glass-card in index.css) -- used flat, with nothing solid
+     behind it, it read as barely-visible/overlapping whatever page
+     content sat behind this fixed-position tray. --surface-strong (a
+     higher-opacity variant) plus the same blur the rest of the app uses
+     for floating panels makes this an actually legible glass panel. */
+  background: var(--surface-strong, #1e1e1e);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: var(--text);
   border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow, 0 8px 28px rgba(0, 0, 0, 0.35));
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
 }
 
 .uploads-tray-header {
@@ -27,7 +35,7 @@
 .uploads-tray-list {
   max-height: 300px;
   overflow-y: auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--surface-border, rgba(255, 255, 255, 0.06));
 }
 
 .uploads-tray-row {
@@ -35,7 +43,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--surface-border, rgba(255, 255, 255, 0.05));
 }
 
 .uploads-tray-row:last-child {
@@ -63,7 +71,7 @@
 
 .uploads-tray-progress-track {
   height: 3px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-border, rgba(255, 255, 255, 0.1));
   border-radius: 2px;
   margin-top: 5px;
   overflow: hidden;

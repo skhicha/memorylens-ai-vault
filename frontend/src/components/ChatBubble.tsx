@@ -26,7 +26,9 @@ export function ChatBubble({ message }: { message: ChatMessage }) {
               <button
                 key={`${c.media_id}-${i}`}
                 className="chat-citation-chip"
-                onClick={() => navigate(`/media/${c.media_id}`)}
+                onClick={() =>
+                  navigate(c.segment_start !== null ? `/media/${c.media_id}?t=${c.segment_start}` : `/media/${c.media_id}`)
+                }
               >
                 <FileText size={12} />
                 {c.filename}
