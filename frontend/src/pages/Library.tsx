@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ImageOff, CheckSquare, Trash2, X } from "lucide-react";
+import { ImageOff, CheckSquare, Trash2, X, FolderPlus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api, getAccessToken, type MediaItem, type MediaType } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { LibrarySkeletonGrid } from "../components/Skeleton";
@@ -9,7 +10,10 @@ import "./Library.css";
 
 export function LibraryPage() {
   const { hasPermission } = useAuth();
+  const navigate = useNavigate();
   const canEdit = hasPermission("media.delete");
+  const canSaveCollection = hasPermission("collections.create");
+  const [savingCollection, setSavingCollection] = useState(false);
   const { items: uploadItems } = useUploadStore();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,6 +136,26 @@ export function LibraryPage() {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, is_favorite } : i)));
   };
 
+  const saveAsCollection = async () => {
+    const name = window.prompt("Name this smart collection (it will always follow the current filters):");
+    if (!name || !name.trim()) return;
+    setSavingCollection(true);
+    try {
+      const created = await api.createCollection({
+        name: name.trim(),
+        filter: {
+          media_type: mediaType || undefined,
+          tag: tag || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+        },
+      });
+      navigate(`/collections/${created.id}`);
+    } finally {
+      setSavingCollection(false);
+    }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -166,6 +190,11 @@ export function LibraryPage() {
         {canEdit && (
           <button type="button" className={`btn btn-sm${selectMode ? " btn-primary" : ""}`} onClick={toggleSelectMode}>
             <CheckSquare size={14} /> {selectMode ? "Cancel select" : "Select"}
+          </button>
+        )}
+        {canSaveCollection && (
+          <button type="button" className="btn btn-sm" disabled={savingCollection} onClick={saveAsCollection}>
+            <FolderPlus size={14} /> Save as collection
           </button>
         )}
       </div>

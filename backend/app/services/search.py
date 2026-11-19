@@ -42,8 +42,12 @@ def _fts_escape(q: str, mode: str = "and") -> str:
     return joiner.join(f'"{t}"*' for t in tokens)
 
 
-def reindex_media(media_id: str, filename: str, tags: List[str], transcript) -> None:
-    """Rebuilds the FTS rows for one media item (filename + tags + transcript segments)."""
+def reindex_media(media_id: str, filename: str, tags: List[str], transcript, captions=None) -> None:
+    """Rebuilds the FTS rows for one media item: filename + tags +
+    transcript segments (what was SAID) + visual captions (what the photo
+    or a video's keyframes actually SHOW, from services/captioning.py --
+    this is what lets Search/Ask AI answer questions about silent footage
+    and photos, neither of which a transcript can ever cover)."""
     with db_cursor() as cur:
         cur.execute("DELETE FROM search_index WHERE media_id = ?", (media_id,))
         cur.execute(
@@ -59,6 +63,11 @@ def reindex_media(media_id: str, filename: str, tags: List[str], transcript) -> 
             cur.execute(
                 "INSERT INTO search_index (media_id, source, segment_start, text) VALUES (?, 'transcript', ?, ?)",
                 (media_id, seg.start, seg.text),
+            )
+        for cap in captions or []:
+            cur.execute(
+                "INSERT INTO search_index (media_id, source, segment_start, text) VALUES (?, 'caption', ?, ?)",
+                (media_id, cap.frame_time, cap.caption),
             )
 
 

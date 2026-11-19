@@ -27,6 +27,7 @@ export interface MediaItem {
   tags: string[];
   thumb_url: string | null;
   is_favorite: boolean;
+  duplicate_count: number;
 }
 
 export interface FaceBox {
@@ -44,9 +45,22 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export interface MediaCaption {
+  frame_time: number;
+  caption: string;
+}
+
 export interface MediaDetail extends MediaItem {
   faces: FaceBox[];
   transcript: TranscriptSegment[];
+  captions: MediaCaption[];
+}
+
+export interface DuplicateItem {
+  id: string;
+  filename: string;
+  thumb_url: string | null;
+  created_at: string;
 }
 
 export interface SearchResult {
@@ -54,9 +68,26 @@ export interface SearchResult {
   filename: string;
   media_type: MediaType;
   thumb_url: string | null;
-  source: "filename" | "tag" | "transcript";
+  source: "filename" | "tag" | "transcript" | "caption";
   segment_start: number | null;
   snippet: string;
+}
+
+export interface CollectionFilter {
+  media_type?: MediaType | null;
+  tag?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+}
+
+export interface Collection {
+  id: string;
+  name: string;
+  description: string | null;
+  is_smart: boolean;
+  filter: CollectionFilter | null;
+  item_count: number;
+  created_at: string;
 }
 
 export interface Citation {
@@ -513,7 +544,69 @@ export const api = {
   },
 
   deleteMedia(id: string) {
+    // Soft-delete: moves the item to Trash. See purgeMedia() for the
+    // actual permanent delete.
     return request<{ ok: boolean }>(`/api/media/${id}`, { method: "DELETE" });
+  },
+
+  listTrash() {
+    return request<MediaItem[]>(`/api/media/trash`);
+  },
+
+  restoreMedia(id: string) {
+    return request<{ ok: boolean }>(`/api/media/${id}/restore`, { method: "POST" });
+  },
+
+  purgeMedia(id: string) {
+    return request<{ ok: boolean }>(`/api/media/${id}/purge`, { method: "DELETE" });
+  },
+
+  getDuplicates(id: string) {
+    return request<DuplicateItem[]>(`/api/media/${id}/duplicates`);
+  },
+
+  listCollections() {
+    return request<Collection[]>(`/api/collections`);
+  },
+
+  createCollection(body: { name: string; description?: string; filter?: CollectionFilter }) {
+    return request<Collection>(`/api/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+
+  getCollection(id: string) {
+    return request<Collection>(`/api/collections/${id}`);
+  },
+
+  listCollectionItems(id: string) {
+    return request<MediaItem[]>(`/api/collections/${id}/items`);
+  },
+
+  updateCollection(id: string, body: { name?: string; description?: string }) {
+    return request<Collection>(`/api/collections/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+
+  deleteCollection(id: string) {
+    return request<{ ok: boolean }>(`/api/collections/${id}`, { method: "DELETE" });
+  },
+
+  addToCollection(collectionId: string, mediaId: string) {
+    return request<{ ok: boolean }>(`/api/collections/${collectionId}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ media_id: mediaId }),
+    });
+  },
+
+  removeFromCollection(collectionId: string, mediaId: string) {
+    return request<{ ok: boolean }>(`/api/collections/${collectionId}/items/${mediaId}`, { method: "DELETE" });
   },
 
   toggleFavorite(id: string, is_favorite: boolean) {

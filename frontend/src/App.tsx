@@ -25,6 +25,9 @@ import { AskAIPage } from "./pages/AskAI";
 import { DashboardPage } from "./pages/Dashboard";
 import { SettingsPage } from "./pages/Settings";
 import { AdminPage } from "./pages/Admin";
+import { CollectionsPage } from "./pages/Collections";
+import { CollectionDetailPage } from "./pages/CollectionDetail";
+import { TrashPage } from "./pages/Trash";
 
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/oauth/callback"];
 
@@ -77,6 +80,30 @@ function AppShell() {
             element={
               <ProtectedRoute>
                 <MediaDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/collections"
+            element={
+              <ProtectedRoute requirePermission="collections.view">
+                <CollectionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/collections/:id"
+            element={
+              <ProtectedRoute requirePermission="collections.view">
+                <CollectionDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trash"
+            element={
+              <ProtectedRoute requirePermission="media.delete">
+                <TrashPage />
               </ProtectedRoute>
             }
           />

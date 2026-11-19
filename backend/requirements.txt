@@ -19,3 +19,9 @@ python-jose[cryptography]==3.3.0
 slowapi==0.1.9
 pyotp==2.10.0
 qrcode==8.2
+# Visual scene captioning (services/captioning.py) -- CPU-only torch; the
+# real install command needs the CPU wheel index, not plain PyPI:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   pip install transformers
+torch==2.15.0
+transformers==5.23.0

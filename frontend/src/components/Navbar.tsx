@@ -11,6 +11,8 @@ import {
   Camera,
   LogOut,
   ShieldCheck,
+  Folder,
+  Trash2,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "../lib/AuthContext";
@@ -19,12 +21,14 @@ import "./Navbar.css";
 const LINKS = [
   { to: "/upload", label: "Upload", icon: Upload },
   { to: "/library", label: "Library", icon: LayoutGrid },
+  { to: "/collections", label: "Collections", icon: Folder },
   { to: "/timeline", label: "Timeline", icon: Clock },
   { to: "/map", label: "Map", icon: MapIcon },
   { to: "/search", label: "Search", icon: Search },
   { to: "/ask", label: "Ask AI", icon: Sparkles },
   { to: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
+  { to: "/trash", label: "Trash", icon: Trash2 },
 ];
 
 export function Navbar() {
@@ -49,7 +53,12 @@ export function Navbar() {
       </div>
 
       <div className="navbar-links">
-        {LINKS.filter(({ to }) => to !== "/upload" || hasPermission("media.upload")).map(({ to, label, icon: Icon }) => (
+        {LINKS.filter(
+          ({ to }) =>
+            (to !== "/upload" || hasPermission("media.upload")) &&
+            (to !== "/collections" || hasPermission("collections.view")) &&
+            (to !== "/trash" || hasPermission("media.delete"))
+        ).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

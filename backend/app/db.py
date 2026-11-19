@@ -103,6 +103,18 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_transcript_media ON transcript_segments(media_id);
 
+-- Visual scene captions (what a photo, or a video keyframe, actually
+-- SHOWS -- see services/captioning.py), as opposed to transcript_segments
+-- (what was SAID). frame_time is 0 for a photo's single caption, or the
+-- real keyframe timestamp for one of a video's (capped) sampled frames.
+CREATE TABLE IF NOT EXISTS media_captions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    frame_time REAL NOT NULL DEFAULT 0,
+    caption TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_captions_media ON media_captions(media_id);
+
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
@@ -164,6 +176,31 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
     PRIMARY KEY (role_id, permission_id)
 );
+
+-- Collections (albums): a named grouping of a user's own media, in one of
+-- two modes. "Manual" collections (filter_json IS NULL) hold an explicit
+-- list of items via collection_items, added/removed one at a time -- a
+-- normal album. "Smart" collections (filter_json set) have no items of
+-- their own at all; their membership is computed at read time by re-running
+-- the same media_type/tag/date filter Library already supports, so a smart
+-- collection like "Outdoor videos" always reflects the current vault
+-- instead of a stale snapshot.
+CREATE TABLE IF NOT EXISTS collections (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    filter_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id);
+
+CREATE TABLE IF NOT EXISTS collection_items (
+    collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (collection_id, media_id)
+);
 """
 
 # Permission catalogue: resource -> [(action, description), ...]. Codes are
@@ -200,7 +237,24 @@ PERMISSION_CATALOGUE: dict[str, list[tuple[str, str]]] = {
         ("view", "View account/appearance settings"),
         ("edit", "Edit account/appearance settings"),
     ],
+    "collections": [
+        ("view", "View collections/albums"),
+        ("create", "Create collections/albums"),
+        ("edit", "Rename/edit a collection and add or remove its items"),
+        ("delete", "Delete a collection"),
+    ],
 }
+
+# Permission codes introduced after the initial RBAC release. On an
+# existing database, an admin's prior edits to an EXISTING role's grants
+# must never be silently overwritten on restart (see the "only seed a
+# role's defaults the first time it has zero permissions" rule below) --
+# but that same rule would mean a role created before this set of codes
+# existed just never gets them at all, forever. This set is backfilled
+# per-code instead (see _seed_rbac): granted to a role only if that role
+# has no row at all for that specific code yet, which is safe to do
+# unconditionally for a code that didn't exist until now.
+NEW_PERMISSION_CODES = {"collections.view", "collections.create", "collections.edit", "collections.delete"}
 
 # Default grants per role slug, matching current hard-coded behaviour so
 # nothing regresses when this table starts being consulted.
@@ -212,11 +266,13 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "media.view", "media.upload", "media.edit", "media.delete", "media.download",
         "search.view", "ask_ai.view", "dashboard.view",
         "settings.view", "settings.edit",
+        "collections.view", "collections.create", "collections.edit", "collections.delete",
     ],
     "viewer": [
         "media.view", "media.download",
         "search.view", "ask_ai.view", "dashboard.view",
         "settings.view",
+        "collections.view",
     ],
 }
 
@@ -262,6 +318,29 @@ def _seed_rbac(conn: sqlite3.Connection) -> None:
                     "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)",
                     (role_id, perm_row[0]),
                 )
+    # Backfill permission codes introduced after the initial RBAC release
+    # (see NEW_PERMISSION_CODES) onto every role, including ones that
+    # already had other permissions and so were skipped by the "only seed
+    # a role's defaults the first time it has zero permissions" loop
+    # above. This is safe to run unconditionally on every startup: a code
+    # that didn't exist before this release can't have been previously
+    # removed by an admin, so there's no prior edit to accidentally
+    # overwrite -- unlike the loop above, which must never re-grant an
+    # OLD code an admin deliberately took away.
+    for slug, codes in DEFAULT_ROLE_PERMISSIONS.items():
+        role_row = conn.execute("SELECT id FROM roles WHERE slug = ?", (slug,)).fetchone()
+        if not role_row:
+            continue
+        role_id = role_row[0]
+        for code in codes:
+            if code not in NEW_PERMISSION_CODES:
+                continue
+            perm_row = conn.execute("SELECT id FROM permissions WHERE code = ?", (code,)).fetchone()
+            if perm_row:
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)",
+                    (role_id, perm_row[0]),
+                )
     conn.commit()
 
 
@@ -297,6 +376,18 @@ USER_COLUMN_MIGRATIONS = [
 
 MEDIA_COLUMN_MIGRATIONS = [
     "ALTER TABLE media ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+    # sha256 of the file's actual bytes, computed once at upload time --
+    # powers exact-duplicate detection (same file uploaded twice, or the
+    # same photo saved under two different filenames) without needing any
+    # perceptual-hashing library; two rows sharing a hash are provably the
+    # same bytes, not just "probably similar."
+    "ALTER TABLE media ADD COLUMN sha256 TEXT",
+    # Soft-delete: a non-NULL deleted_at moves an item into Trash instead
+    # of removing its row/files immediately. list_media() filters these out
+    # by default; a separate trash endpoint lists only these, with restore
+    # (clear deleted_at) and permanent-purge (the old hard-delete behavior)
+    # actions.
+    "ALTER TABLE media ADD COLUMN deleted_at TEXT",
 ]
 
 
@@ -311,6 +402,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # then on a pre-existing database. SQLite unique indexes allow any
     # number of NULLs, so plain members (google_sub IS NULL) are unaffected.
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)")
+    # Not unique (NULL sha256 rows exist for media uploaded before this
+    # migration, and SQLite's non-unique index happily allows duplicate
+    # NULLs as well as duplicate real hashes) -- this is purely a lookup
+    # accelerator for "find other rows with this same hash."
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_media_sha256 ON media(sha256)")
     conn.commit()
 
 

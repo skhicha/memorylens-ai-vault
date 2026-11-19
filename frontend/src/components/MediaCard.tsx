@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Video, ImageIcon, Users, Star, Check } from "lucide-react";
+import { Video, ImageIcon, Users, Star, Check, Copy } from "lucide-react";
 import { api, type MediaItem } from "../lib/api";
 import { withAuth } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
@@ -97,6 +97,12 @@ export function MediaCard({
 
       {media.status !== "ready" && (
         <span className={`status-pill ${media.status} media-card-status`}>{media.status}</span>
+      )}
+
+      {media.duplicate_count > 0 && (
+        <div className="media-card-badge" style={{ top: 34 }} title={`${media.duplicate_count} identical copy(ies) in your vault`}>
+          <Copy size={12} /> {media.duplicate_count}
+        </div>
       )}
 
       <div className="media-card-body">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Trash2, MapPin, Camera, Clock3 } from "lucide-react";
+import { ArrowLeft, Trash2, MapPin, Camera, Clock3, Eye, Copy } from "lucide-react";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "../lib/leafletIcons";
@@ -68,7 +68,7 @@ export function MediaDetailPage() {
           title={canDelete ? "Delete" : "You don't have permission to delete media"}
           onClick={async () => {
             if (!canDelete) return;
-            if (confirm(`Delete ${media.filename}? This cannot be undone.`)) {
+            if (confirm(`Move ${media.filename} to Trash? You can restore it from Trash later.`)) {
               await api.deleteMedia(media.id);
               navigate("/library");
             }
@@ -177,6 +177,18 @@ export function MediaDetailPage() {
               <dd>{media.created_at}</dd>
               <dt>Faces detected</dt>
               <dd>{media.face_count}</dd>
+              {media.duplicate_count > 0 && (
+                <>
+                  <dt>
+                    <Copy size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+                    Duplicates
+                  </dt>
+                  <dd>
+                    {media.duplicate_count} other identical {media.duplicate_count === 1 ? "copy" : "copies"} in your
+                    vault
+                  </dd>
+                </>
+              )}
               {media.media_type === "video" && (
                 <>
                   <dt>Transcription</dt>
@@ -191,6 +203,31 @@ export function MediaDetailPage() {
               )}
             </dl>
           </div>
+
+          {media.captions.length > 0 && (
+            <div className="detail-panel-section">
+              <h3>
+                <Eye size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
+                Scene description
+              </h3>
+              <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: "0 0 10px" }}>
+                What this {media.media_type} visually shows, auto-generated -- distinct from the transcript below,
+                which is what was said.
+              </p>
+              <div className="transcript-list">
+                {media.captions.map((cap, i) => (
+                  <div
+                    key={i}
+                    className="transcript-row"
+                    onClick={() => media.media_type === "video" && seekTo(cap.frame_time)}
+                  >
+                    {media.media_type === "video" && <span className="transcript-time">{cap.frame_time.toFixed(1)}s</span>}
+                    <span>{cap.caption}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {media.transcript.length > 0 && (
             <div className="detail-panel-section">

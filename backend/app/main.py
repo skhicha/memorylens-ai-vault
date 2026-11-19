@@ -13,7 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.db import init_db
-from app.routers import admin, ask, auth, dashboard, media, search
+from app.routers import admin, ask, auth, collections, dashboard, media, search
 from app.routers.auth import limiter
 from app.services.pipeline import start_worker
 
@@ -69,3 +69,4 @@ app.include_router(search.router)
 app.include_router(ask.router)
 app.include_router(dashboard.router)
 app.include_router(admin.router)
+app.include_router(collections.router)

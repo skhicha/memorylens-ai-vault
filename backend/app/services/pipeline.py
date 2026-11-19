@@ -32,8 +32,15 @@ from typing import List
 import cv2
 
 from app.db import KEYFRAMES_DIR, THUMBS_DIR, db_cursor
-from app.services import asr, exif, vision
+from app.services import asr, captioning, exif, vision
 from app.services.search import reindex_media
+
+# A video's keyframes already extract every ~2s for face detection; running
+# the (CPU-bound, ~1-2s each) captioning model on every single one of them
+# would make a long video's processing time scale with its length for a
+# non-essential step. Sampling a small, fixed number spread across the clip
+# gives a representative sense of what it shows without that cost.
+MAX_VIDEO_CAPTIONS = 3
 
 # Defense in depth: keep OpenCV's own internal thread pool from adding any
 # concurrency of its own on top of our single-worker serialization.
@@ -136,6 +143,20 @@ def _process_photo(media_id: str, file_path: str) -> None:
     tags = _build_tags(has_faces=bool(face_boxes), time_of_day=time_of_day, outdoor_guess=outdoor_guess)
     _save_tags(media_id, tags)
 
+    # Best-effort scene captioning: never allowed to fail the whole item
+    # (same contract as ASR below), and the only source of a textual
+    # description this app has for a photo at all, since photos have no
+    # transcript.
+    captions = []
+    if img is not None:
+        try:
+            caption_text = captioning.caption_image(img)
+            if caption_text:
+                captions.append(_Caption(frame_time=0.0, caption=caption_text))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[pipeline] captioning step raised unexpectedly, skipping: {exc}")
+    _save_captions(media_id, captions)
+
     _set_status(
         media_id,
         thumb_path=thumb_path_str,
@@ -155,7 +176,7 @@ def _process_photo(media_id: str, file_path: str) -> None:
     with db_cursor() as cur:
         cur.execute("SELECT filename FROM media WHERE id = ?", (media_id,))
         filename = cur.fetchone()["filename"]
-    reindex_media(media_id, filename, tags, None)
+    reindex_media(media_id, filename, tags, None, captions=captions)
 
 
 def _process_video(media_id: str, file_path: str) -> None:
@@ -216,6 +237,28 @@ def _process_video(media_id: str, file_path: str) -> None:
                     (media_id, seg.start, seg.end, seg.text),
                 )
 
+    # Best-effort scene captioning over a small, evenly-spaced sample of
+    # this video's keyframes (see MAX_VIDEO_CAPTIONS) -- never allowed to
+    # fail the whole item. Distinct from the transcript: this describes
+    # what the footage visually SHOWS at a few points in time, which
+    # matters most for videos with no speech at all (the "has-speech" tag
+    # above would otherwise be the only signal this app has for them).
+    captions: List[_Caption] = []
+    if keyframes:
+        step = max(1, len(keyframes) // MAX_VIDEO_CAPTIONS)
+        sampled = keyframes[::step][:MAX_VIDEO_CAPTIONS]
+        for kf in sampled:
+            frame = cv2.imread(kf.path)
+            if frame is None:
+                continue
+            try:
+                caption_text = captioning.caption_image(frame)
+                if caption_text:
+                    captions.append(_Caption(frame_time=kf.frame_time, caption=caption_text))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pipeline] captioning step raised unexpectedly, skipping: {exc}")
+    _save_captions(media_id, captions)
+
     tags = _build_tags(has_faces=any_faces, time_of_day=time_of_day, outdoor_guess=outdoor_guess)
     if transcript:
         tags.append("has-speech")
@@ -239,7 +282,27 @@ def _process_video(media_id: str, file_path: str) -> None:
     with db_cursor() as cur:
         cur.execute("SELECT filename FROM media WHERE id = ?", (media_id,))
         filename = cur.fetchone()["filename"]
-    reindex_media(media_id, filename, tags, transcript)
+    reindex_media(media_id, filename, tags, transcript, captions=captions)
+
+
+class _Caption:
+    """Plain attribute holder, not a dataclass, to match the shape
+    reindex_media() already expects (a .frame_time/.caption object) --
+    mirrors asr.TranscriptSegment's role for transcript rows."""
+
+    def __init__(self, frame_time: float, caption: str):
+        self.frame_time = frame_time
+        self.caption = caption
+
+
+def _save_captions(media_id: str, captions: List["_Caption"]) -> None:
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM media_captions WHERE media_id = ?", (media_id,))
+        for cap in captions:
+            cur.execute(
+                "INSERT INTO media_captions (media_id, frame_time, caption) VALUES (?, ?, ?)",
+                (media_id, cap.frame_time, cap.caption),
+            )
 
 
 def _build_tags(has_faces: bool, time_of_day, outdoor_guess) -> List[str]:
@@ -281,6 +344,11 @@ def reindex_all() -> int:
                 asr.TranscriptSegment(start=r["start_time"], end=r["end_time"], text=r["text"])
                 for r in cur.fetchall()
             ]
-        reindex_media(media_id, filename, tags, transcript)
+            cur.execute(
+                "SELECT frame_time, caption FROM media_captions WHERE media_id = ? ORDER BY frame_time",
+                (media_id,),
+            )
+            captions = [_Caption(frame_time=r["frame_time"], caption=r["caption"]) for r in cur.fetchall()]
+        reindex_media(media_id, filename, tags, transcript, captions=captions)
         count += 1
     return count

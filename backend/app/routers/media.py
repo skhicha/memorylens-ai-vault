@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -53,6 +55,11 @@ class TranscriptOut(BaseModel):
     text: str
 
 
+class CaptionOut(BaseModel):
+    frame_time: float
+    caption: str
+
+
 class MediaOut(BaseModel):
     id: str
     filename: str
@@ -76,14 +83,16 @@ class MediaOut(BaseModel):
     tags: List[str] = []
     thumb_url: Optional[str] = None
     is_favorite: bool = False
+    duplicate_count: int = 0
 
 
 class MediaDetailOut(MediaOut):
     faces: List[FaceOut] = []
     transcript: List[TranscriptOut] = []
+    captions: List[CaptionOut] = []
 
 
-def _row_to_media_out(row, tags: List[str]) -> MediaOut:
+def _row_to_media_out(row, tags: List[str], duplicate_count: int = 0) -> MediaOut:
     return MediaOut(
         id=row["id"],
         filename=row["filename"],
@@ -107,6 +116,7 @@ def _row_to_media_out(row, tags: List[str]) -> MediaOut:
         tags=tags,
         thumb_url=f"/api/media/{row['id']}/thumbnail" if row["thumb_path"] else None,
         is_favorite=bool(row["is_favorite"]),
+        duplicate_count=duplicate_count,
     )
 
 
@@ -119,10 +129,14 @@ async def upload_media(
         raise HTTPException(400, f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_EXTS)}")
 
     # Read into memory in bounded chunks so we can reject oversized/invalid
-    # uploads cleanly (4xx) before ever writing a byte to disk.
+    # uploads cleanly (4xx) before ever writing a byte to disk. The sha256
+    # of the actual bytes is computed in the same pass (powers exact-
+    # duplicate detection below) rather than re-reading the file again
+    # afterward.
     header = b""
     total = 0
     chunks: List[bytes] = []
+    hasher = hashlib.sha256()
     while True:
         chunk = await file.read(1024 * 1024)
         if not chunk:
@@ -132,6 +146,7 @@ async def upload_media(
             raise HTTPException(413, f"File too large. Max allowed size is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
         if len(header) < 64:
             header += chunk[: 64 - len(header)]
+        hasher.update(chunk)
         chunks.append(chunk)
 
     if total == 0:
@@ -150,19 +165,24 @@ async def upload_media(
             out.write(chunk)
     size_bytes = dest_path.stat().st_size
 
+    sha256 = hasher.hexdigest()
     with db_cursor() as cur:
         cur.execute(
             """
-            INSERT INTO media (id, user_id, filename, media_type, status, file_path, mime_type, size_bytes)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+            INSERT INTO media (id, user_id, filename, media_type, status, file_path, mime_type, size_bytes, sha256)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
-            (media_id, current_user.id, file.filename, media_type, str(dest_path), file.content_type, size_bytes),
+            (media_id, current_user.id, file.filename, media_type, str(dest_path), file.content_type, size_bytes, sha256),
         )
         cur.execute("SELECT * FROM media WHERE id = ?", (media_id,))
         row = cur.fetchone()
+        dup_count = cur.execute(
+            "SELECT COUNT(*) c FROM media WHERE user_id = ? AND sha256 = ? AND id != ? AND deleted_at IS NULL",
+            (current_user.id, sha256, media_id),
+        ).fetchone()["c"]
 
     process_media_async(media_id, str(dest_path), media_type)
-    return _row_to_media_out(row, [])
+    return _row_to_media_out(row, [], duplicate_count=dup_count)
 
 
 @router.get("", response_model=List[MediaOut])
@@ -173,7 +193,9 @@ def list_media(
     date_to: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> List[MediaOut]:
-    clauses = ["user_id = ?"]
+    # Trashed items (deleted_at set) never appear in the normal library --
+    # only GET /api/media/trash lists those.
+    clauses = ["user_id = ?", "deleted_at IS NULL"]
     params: list = [current_user.id]
     if media_type:
         clauses.append("media_type = ?")
@@ -191,6 +213,35 @@ def list_media(
     where = f"WHERE {' AND '.join(clauses)}"
     with db_cursor() as cur:
         cur.execute(f"SELECT * FROM media {where} ORDER BY created_at DESC", params)
+        rows = cur.fetchall()
+        # One grouped query for every non-null hash this user owns, rather
+        # than a per-row duplicate lookup -- O(1) queries instead of O(n).
+        cur.execute(
+            "SELECT sha256, COUNT(*) c FROM media WHERE user_id = ? AND sha256 IS NOT NULL AND deleted_at IS NULL "
+            "GROUP BY sha256 HAVING COUNT(*) > 1",
+            (current_user.id,),
+        )
+        dup_counts = {r["sha256"]: r["c"] for r in cur.fetchall()}
+        out = []
+        for row in rows:
+            cur.execute("SELECT tag FROM tags WHERE media_id = ?", (row["id"],))
+            tags = [r["tag"] for r in cur.fetchall()]
+            dup = dup_counts.get(row["sha256"], 1) - 1 if row["sha256"] else 0
+            out.append(_row_to_media_out(row, tags, duplicate_count=dup))
+    return out
+
+
+@router.get("/trash", response_model=List[MediaOut])
+def list_trash(current_user: CurrentUser = Depends(require_permission("media.delete"))) -> List[MediaOut]:
+    """Items this user has soft-deleted -- gated on media.delete (the same
+    permission that can move something into Trash in the first place),
+    not just media.view, since seeing what's in the trash is part of
+    managing deletions, not plain browsing."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM media WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+            (current_user.id,),
+        )
         rows = cur.fetchall()
         out = []
         for row in rows:
@@ -228,9 +279,52 @@ def get_media(media_id: str, current_user: CurrentUser = Depends(get_current_use
             (media_id,),
         )
         transcript = [TranscriptOut(**dict(r)) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT frame_time, caption FROM media_captions WHERE media_id = ? ORDER BY frame_time",
+            (media_id,),
+        )
+        captions = [CaptionOut(**dict(r)) for r in cur.fetchall()]
+        dup_count = cur.execute(
+            "SELECT COUNT(*) c FROM media WHERE user_id = ? AND sha256 = ? AND id != ? AND deleted_at IS NULL",
+            (current_user.id, row["sha256"], media_id),
+        ).fetchone()["c"] if row["sha256"] else 0
 
-    base = _row_to_media_out(row, tags)
-    return MediaDetailOut(**base.model_dump(), faces=faces, transcript=transcript)
+    base = _row_to_media_out(row, tags, duplicate_count=dup_count)
+    return MediaDetailOut(**base.model_dump(), faces=faces, transcript=transcript, captions=captions)
+
+
+class DuplicateOut(BaseModel):
+    id: str
+    filename: str
+    thumb_url: Optional[str] = None
+    created_at: str
+
+
+@router.get("/{media_id}/duplicates", response_model=List[DuplicateOut])
+def get_duplicates(media_id: str, current_user: CurrentUser = Depends(get_current_user)) -> List[DuplicateOut]:
+    """Other media OWNED BY THE SAME USER with byte-identical content (same
+    sha256) -- never cross-user, so this can never reveal that some other
+    account happens to have uploaded the same file."""
+    with db_cursor() as cur:
+        row = _get_owned_media_row(media_id, current_user.id, cur)
+        if not row:
+            raise HTTPException(404, "Media not found")
+        if not row["sha256"]:
+            return []
+        cur.execute(
+            "SELECT id, filename, thumb_path, created_at FROM media "
+            "WHERE user_id = ? AND sha256 = ? AND id != ? AND deleted_at IS NULL",
+            (current_user.id, row["sha256"], media_id),
+        )
+        return [
+            DuplicateOut(
+                id=r["id"],
+                filename=r["filename"],
+                thumb_url=f"/api/media/{r['id']}/thumbnail" if r["thumb_path"] else None,
+                created_at=r["created_at"],
+            )
+            for r in cur.fetchall()
+        ]
 
 
 class FavoriteIn(BaseModel):
@@ -258,10 +352,68 @@ def set_favorite(
 
 @router.delete("/{media_id}")
 def delete_media(media_id: str, current_user: CurrentUser = Depends(require_permission("media.delete"))) -> dict:
+    """Soft-delete: moves the item to Trash (GET /api/media/trash) rather
+    than removing its row/files immediately. It also drops out of search
+    results right away (removed from search_index below) since a trashed
+    item showing up in Search/Ask AI would be confusing, even though its
+    row and files are kept until restored or purged."""
     with db_cursor() as cur:
         row = _get_owned_media_row(media_id, current_user.id, cur)
         if not row:
             raise HTTPException(404, "Media not found")
+        if row["deleted_at"]:
+            raise HTTPException(400, "Already in Trash")
+        cur.execute("DELETE FROM search_index WHERE media_id = ?", (media_id,))
+        cur.execute("UPDATE media SET deleted_at = datetime('now') WHERE id = ?", (media_id,))
+    return {"ok": True}
+
+
+@router.post("/{media_id}/restore")
+def restore_media(media_id: str, current_user: CurrentUser = Depends(require_permission("media.delete"))) -> dict:
+    with db_cursor() as cur:
+        row = _get_owned_media_row(media_id, current_user.id, cur)
+        if not row:
+            raise HTTPException(404, "Media not found")
+        if not row["deleted_at"]:
+            raise HTTPException(400, "Not in Trash")
+        cur.execute("UPDATE media SET deleted_at = NULL WHERE id = ?", (media_id,))
+    # Restoring an item should make it findable in Search/Ask AI again --
+    # re-run the same indexing step the processing pipeline uses, using
+    # whatever tags/transcript/captions it already has on file.
+    from types import SimpleNamespace
+
+    from app.services.search import reindex_media
+
+    with db_cursor() as cur:
+        cur.execute("SELECT filename FROM media WHERE id = ?", (media_id,))
+        filename = cur.fetchone()["filename"]
+        tags = [r["tag"] for r in cur.execute("SELECT tag FROM tags WHERE media_id = ?", (media_id,)).fetchall()]
+        transcript_rows = cur.execute(
+            "SELECT start_time, end_time, text FROM transcript_segments WHERE media_id = ? ORDER BY start_time",
+            (media_id,),
+        ).fetchall()
+        caption_rows = cur.execute(
+            "SELECT frame_time, caption FROM media_captions WHERE media_id = ? ORDER BY frame_time",
+            (media_id,),
+        ).fetchall()
+    transcript = [SimpleNamespace(start=r["start_time"], end=r["end_time"], text=r["text"]) for r in transcript_rows]
+    captions = [SimpleNamespace(frame_time=r["frame_time"], caption=r["caption"]) for r in caption_rows]
+    reindex_media(media_id, filename, tags, transcript or None, captions=captions or None)
+    return {"ok": True}
+
+
+@router.delete("/{media_id}/purge")
+def purge_media(media_id: str, current_user: CurrentUser = Depends(require_permission("media.delete"))) -> dict:
+    """Permanent delete -- only meaningful from within Trash (an item must
+    already be soft-deleted), since this is the point of no return the
+    Trash UI's confirmation dialog warns about; purging something that was
+    never moved to Trash first would skip that safety step entirely."""
+    with db_cursor() as cur:
+        row = _get_owned_media_row(media_id, current_user.id, cur)
+        if not row:
+            raise HTTPException(404, "Media not found")
+        if not row["deleted_at"]:
+            raise HTTPException(400, "Move to Trash before permanently deleting")
         cur.execute("DELETE FROM search_index WHERE media_id = ?", (media_id,))
         cur.execute("DELETE FROM media WHERE id = ?", (media_id,))
     for p in (row["file_path"], row["thumb_path"]):
