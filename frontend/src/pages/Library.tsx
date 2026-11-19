@@ -4,11 +4,13 @@ import { api, getAccessToken, type MediaItem, type MediaType } from "../lib/api"
 import { MediaCard } from "../components/MediaCard";
 import { LibrarySkeletonGrid } from "../components/Skeleton";
 import { useAuth } from "../lib/AuthContext";
+import { useUploadStore } from "../lib/UploadStore";
 import "./Library.css";
 
 export function LibraryPage() {
   const { hasPermission } = useAuth();
   const canEdit = hasPermission("media.delete");
+  const { items: uploadItems } = useUploadStore();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaType, setMediaType] = useState<MediaType | "">("");
@@ -39,6 +41,26 @@ export function LibraryPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaType, tag, dateFrom, dateTo]);
+
+  // A brand-new upload (e.g. the one that just redirected here from the
+  // Upload page) has no row in `items` at all yet -- its server-side
+  // media row may not even exist the instant this page mounts, since the
+  // multipart upload itself is still in flight via the global upload
+  // queue. The "poll while something already in `items` is unsettled"
+  // effect below can't catch that: an item Library has never fetched
+  // can't be in `items` to begin with, so nothing would ever trigger a
+  // refetch until the user manually reloads. Watching the global upload
+  // store directly -- which knows about every in-flight upload from
+  // anywhere in the app, not just ones already reflected here -- closes
+  // that gap: any change in what it's tracking (a new file queued, one
+  // finishing the HTTP upload and becoming a real server row, one
+  // finishing processing) triggers an immediate refetch.
+  const uploadActivitySignal = uploadItems.map((it) => `${it.id}:${it.status}`).join(",");
+  useEffect(() => {
+    if (!uploadItems.length) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadActivitySignal]);
 
   // Media that was already "pending"/"processing" when this page loaded
   // (including right after a full browser refresh, which always kills any
