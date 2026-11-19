@@ -401,6 +401,15 @@ export const api = {
     });
   },
 
+  // Exchanges the caller's real access token (sent normally, as an
+  // Authorization header) for a short-lived, single-use ticket to open the
+  // /api/auth/events SSE connection with -- see the backend endpoint's
+  // docstring for why this indirection exists instead of putting the real
+  // token in that URL.
+  sseTicket() {
+    return request<{ ticket: string }>(`/api/auth/sse-ticket`, { method: "POST" });
+  },
+
   adminListUsers() {
     return request<{ users: AdminUser[] }>(`/api/admin/users`);
   },

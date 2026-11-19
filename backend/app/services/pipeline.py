@@ -228,6 +228,7 @@ def _process_video(media_id: str, file_path: str) -> None:
         height=vmeta.height,
         duration_s=vmeta.duration_s,
         fps=vmeta.fps,
+        taken_at=vmeta.taken_at,
         has_faces=1 if any_faces else 0,
         face_count=total_faces,
         time_of_day=time_of_day,

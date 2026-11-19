@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -39,6 +40,7 @@ class VideoMeta:
     height: Optional[int] = None
     duration_s: Optional[float] = None
     fps: Optional[float] = None
+    taken_at: Optional[str] = None
 
 
 _DETECT_MAX_DIM = 1024  # working resolution for the cascade, see note below
@@ -117,6 +119,33 @@ def guess_outdoor(saturation: float, brightness: float) -> str:
     return "likely indoor"
 
 
+def _video_creation_time(path: str) -> Optional[str]:
+    """Reads the container-level creation_time tag (e.g. QuickTime/MP4's
+    com.apple.quicktime.creationdate or the generic format-level
+    creation_time most phones/cameras write) via a second, cheap ffprobe
+    call -- separate from probe_video_ffprobe's stream-level query since
+    this tag lives under "format", not "streams"."""
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        value = proc.stdout.strip()
+        if not value:
+            return None
+        # Normalize to the same bare ISO-8601 format photo EXIF taken_at
+        # uses (exif.py's dt.isoformat()) rather than whatever variant
+        # ffprobe hands back (commonly "...Z" UTC with microseconds).
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return dt.isoformat()
+        except ValueError:
+            return value  # unparseable but non-empty -- keep it rather than discard real data
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
 def probe_video_ffprobe(path: str) -> Optional[VideoMeta]:
     try:
         proc = subprocess.run(
@@ -139,7 +168,8 @@ def probe_video_ffprobe(path: str) -> Optional[VideoMeta]:
             num, _, den = s["avg_frame_rate"].partition("/")
             fps = float(num) / float(den) if float(den or 1) else None
         duration = float(s["duration"]) if s.get("duration") else None
-        return VideoMeta(width=s.get("width"), height=s.get("height"), duration_s=duration, fps=fps)
+        taken_at = _video_creation_time(path)
+        return VideoMeta(width=s.get("width"), height=s.get("height"), duration_s=duration, fps=fps, taken_at=taken_at)
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, KeyError):
         return None
 

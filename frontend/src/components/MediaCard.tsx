@@ -104,7 +104,7 @@ export function MediaCard({
           {media.filename}
         </div>
         <div className="media-card-meta">
-          {formatDate(media.created_at)}
+          {formatDate(media.taken_at || media.created_at)}
           {media.duration_s ? ` · ${media.duration_s.toFixed(1)}s` : ""}
         </div>
         {media.tags.length > 0 && (

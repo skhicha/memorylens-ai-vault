@@ -237,6 +237,7 @@ export function AdminPage() {
           onClose={() => setShowAddUser(false)}
           onCreated={async (msg) => {
             setShowAddUser(false);
+            setError(null);
             setSuccess(msg);
             await load();
             setTimeout(() => setSuccess(null), 4000);
@@ -262,14 +263,18 @@ function AddUserModal({
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState<Role>("editor");
   const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const submit = async () => {
     setSubmitting(true);
+    setLocalError(null);
     try {
       const created = await api.adminCreateUser(email, password, displayName, role);
       onCreated(`${created.display_name} (${created.email}) was created as ${created.role}.`);
     } catch (err) {
-      onError((err as Error).message.replace(/^\d+\s*/, "") || "Could not create user");
+      const msg = (err as Error).message.replace(/^\d+\s*/, "") || "Could not create user";
+      setLocalError(msg);
+      onError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -279,6 +284,7 @@ function AddUserModal({
     <div className="admin-modal-overlay" onClick={() => !submitting && onClose()}>
       <div className="admin-modal admin-modal-wide glass-card" onClick={(e) => e.stopPropagation()}>
         <h3>Add user</h3>
+        {localError && <div className="auth-error">{localError}</div>}
         <div className="admin-form-field">
           <label>Email</label>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" />

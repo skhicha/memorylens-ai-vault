@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
-import { api, type MediaItem } from "./api";
+import { api, getAccessToken, type MediaItem } from "./api";
 
 export type UploadItemStatus = "queued" | "uploading" | "processing" | "done" | "error";
 
@@ -53,17 +53,37 @@ export function UploadStoreProvider({ children }: { children: ReactNode }) {
 
   const pollStatus = useCallback(
     (id: string, mediaId: string) => {
+      const MAX_CONSECUTIVE_POLL_ERRORS = 5;
+      let consecutiveErrors = 0;
       const tick = async () => {
+        // Stop polling once the item's been dismissed from the tray, OR
+        // once there's no authenticated session to poll with (e.g. logged
+        // out, idle-timed-out, or revoked from another device while this
+        // upload was still processing) -- otherwise this kept retrying
+        // forever, every few seconds, indefinitely spamming 401s even
+        // long after the user had left the page or signed out.
+        if (!itemsRef.current.find((it) => it.id === id)) return;
+        if (!getAccessToken()) return;
         try {
           const media = await api.getMedia(mediaId);
-          if (!itemsRef.current.find((it) => it.id === id)) return; // dismissed
+          consecutiveErrors = 0;
+          if (!itemsRef.current.find((it) => it.id === id)) return; // dismissed mid-request
           if (media.status === "pending" || media.status === "processing") {
             updateItem(id, { media, status: "processing" });
             setTimeout(tick, 3000);
           } else {
             updateItem(id, { media, status: "done", finishedAt: Date.now() });
           }
-        } catch {
+        } catch (err) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+            updateItem(id, {
+              status: "error",
+              error: "Lost track of this upload's processing status -- check Library directly.",
+              finishedAt: Date.now(),
+            });
+            return;
+          }
           setTimeout(tick, 4000);
         }
       };
@@ -94,6 +114,13 @@ export function UploadStoreProvider({ children }: { children: ReactNode }) {
             // and click retry themselves.
             setTimeout(() => {
               updateItem(next.id, { status: "queued", attempt });
+              // runNext() reads itemsRef synchronously, which is only kept
+              // in sync with React state on render -- update it here too,
+              // or the retried item is invisible to runNext() and gets
+              // stuck "queued" forever (never re-picked-up).
+              itemsRef.current = itemsRef.current.map((it) =>
+                it.id === next.id ? { ...it, status: "queued", attempt } : it
+              );
               runNext();
             }, RETRY_BASE_DELAY_MS * attempt);
             return;
@@ -109,18 +136,38 @@ export function UploadStoreProvider({ children }: { children: ReactNode }) {
 
   const enqueueFiles = useCallback(
     (files: FileList | File[]) => {
-      const list = Array.from(files).filter((f) => {
+      const all = Array.from(files);
+      if (!all.length) return;
+      const accepted: File[] = [];
+      const rejected: File[] = [];
+      for (const f of all) {
         const ext = "." + f.name.split(".").pop()?.toLowerCase();
-        return ACCEPTED_EXT.includes(ext);
-      });
-      if (!list.length) return;
-      const newItems: UploadItem[] = list.map((file) => ({
-        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+        if (ACCEPTED_EXT.includes(ext)) accepted.push(f);
+        else rejected.push(f);
+      }
+      const now = Date.now();
+      const acceptedItems: UploadItem[] = accepted.map((file) => ({
+        id: `${file.name}-${file.size}-${now}-${Math.random()}`,
         file,
         progress: 0,
         status: "queued",
         attempt: 0,
       }));
+      // Unsupported files are surfaced as their own terminal "error" rows
+      // instead of being silently dropped from the selection -- the user
+      // needs to see exactly which files were skipped and why, especially
+      // when they're mixed in with otherwise-valid files in one action.
+      const rejectedItems: UploadItem[] = rejected.map((file) => ({
+        id: `${file.name}-${file.size}-${now}-${Math.random()}`,
+        file,
+        progress: 0,
+        status: "error",
+        attempt: 0,
+        error: "Unsupported file type",
+        finishedAt: now,
+      }));
+      const newItems = [...acceptedItems, ...rejectedItems];
+      if (!newItems.length) return;
       setItems((prev) => [...prev, ...newItems]);
       itemsRef.current = [...itemsRef.current, ...newItems];
       runNext();

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ImageOff, CheckSquare, Trash2, X } from "lucide-react";
-import { api, type MediaItem, type MediaType } from "../lib/api";
+import { api, getAccessToken, type MediaItem, type MediaType } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { LibrarySkeletonGrid } from "../components/Skeleton";
 import { useAuth } from "../lib/AuthContext";
@@ -48,7 +48,21 @@ export function LibraryPage() {
   useEffect(() => {
     const hasUnsettled = items.some((i) => i.status !== "ready" && i.status !== "failed");
     if (!hasUnsettled) return;
-    const interval = setInterval(load, 4000);
+    const interval = setInterval(() => {
+      // Stop silently once there's no session left to poll with (logged
+      // out, idle-timed-out, or revoked elsewhere while this page sat on
+      // unsettled media) -- otherwise this kept retrying every 4s forever,
+      // throwing an unhandled rejection each time with no way to stop.
+      if (!getAccessToken()) {
+        clearInterval(interval);
+        return;
+      }
+      load().catch(() => {
+        // A single failed refresh isn't fatal -- the next tick retries.
+        // If the session is actually gone, the getAccessToken() check
+        // above will stop the interval on the next tick.
+      });
+    }, 4000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);

@@ -380,23 +380,37 @@ def logout_other_devices(current_user: CurrentUser = Depends(get_current_user)) 
     return {"ok": True, "revoked_count": len(revoked)}
 
 
+@router.post("/sse-ticket")
+def issue_sse_ticket(current_user: CurrentUser = Depends(get_current_user)) -> dict:
+    """
+    Mints a short-lived (~20s), single-use ticket for /api/auth/events.
+    Called with a normal Authorization header, like any other endpoint --
+    only the resulting ticket, never the real access token, goes into the
+    SSE connection's URL (EventSource can't set custom headers, so the
+    session has to be identified some other way than Authorization; a
+    long-lived bearer token sitting in a URL would otherwise end up in
+    browser history and server/proxy access logs for as long as it's
+    valid, which this ticket avoids by being useless after one use or 20s).
+    """
+    return {"ticket": sessions.issue_sse_ticket(current_user.session_id)}
+
+
 @router.get("/events")
-async def auth_events(token: str) -> StreamingResponse:
+async def auth_events(ticket: str) -> StreamingResponse:
     """
     Server-Sent Events stream for cross-device logout: one open connection
-    per logged-in browser tab, keyed by this login's session id (embedded
-    in the access token passed as ?token=, since EventSource can't set an
-    Authorization header). When this specific session is revoked -- by
-    logging out on another tab/device, by "log out all other devices", or
-    by an admin deactivating/deleting the account -- a "logout" event is
-    pushed here immediately; see app/services/sessions.py.
+    per logged-in browser tab, keyed by this login's session id. The tab
+    first exchanges its real access token for a one-time ticket via
+    POST /sse-ticket (normal Authorization header), then opens this
+    connection with that ticket -- see issue_sse_ticket() above for why.
+    When this session is revoked -- by logging out on another tab/device,
+    by "log out all other devices", or by an admin deactivating/deleting
+    the account -- a "logout" event is pushed here immediately; see
+    app/services/sessions.py.
     """
-    from app.auth import decode_token_payload  # local import avoids a cycle at module load time
-
-    payload = decode_token_payload(token, "access")
-    session_id = payload.get("sid")
+    session_id = sessions.consume_sse_ticket(ticket)
     if not session_id:
-        raise HTTPException(400, "This token has no session to subscribe to")
+        raise HTTPException(401, "Invalid or expired connection ticket")
     if not sessions.is_session_valid(session_id):
         raise HTTPException(401, "This session has been logged out")
 

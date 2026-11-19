@@ -16,6 +16,7 @@ need a shared broker (e.g. Redis pub/sub) instead.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from typing import Optional
 
@@ -24,6 +25,36 @@ from app.db import db_cursor
 # session_id -> set of asyncio.Queue, one per open SSE connection for that
 # session (normally just one tab, but nothing stops two).
 _subscribers: dict[str, set[asyncio.Queue]] = {}
+
+# Short-lived, single-use tickets for the SSE endpoint. EventSource can't
+# set an Authorization header, so the browser can't open that connection
+# with a normal bearer token -- but putting the real (long-lived) access
+# token directly in the URL means it ends up in browser history, server
+# access logs, and any intermediate proxy's logs for as long as that token
+# is valid. Instead, an authenticated request (normal Authorization header)
+# mints a random ticket good for ~20s and exactly one use, and only that
+# ticket goes in the SSE URL.
+_SSE_TICKET_TTL_SECONDS = 20
+_sse_tickets: dict[str, tuple[str, float]] = {}  # ticket -> (session_id, expires_at)
+
+
+def issue_sse_ticket(session_id: str) -> str:
+    ticket = uuid.uuid4().hex
+    _sse_tickets[ticket] = (session_id, time.monotonic() + _SSE_TICKET_TTL_SECONDS)
+    return ticket
+
+
+def consume_sse_ticket(ticket: str) -> Optional[str]:
+    """Returns the session id for a valid, unused, unexpired ticket, and
+    invalidates it immediately (single use) -- or None if the ticket is
+    missing, already used, or expired."""
+    entry = _sse_tickets.pop(ticket, None)
+    if entry is None:
+        return None
+    session_id, expires_at = entry
+    if time.monotonic() > expires_at:
+        return None
+    return session_id
 
 
 def label_from_user_agent(user_agent: Optional[str]) -> Optional[str]:

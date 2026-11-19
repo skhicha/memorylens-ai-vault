@@ -61,14 +61,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const eventSourceRef = useRef<EventSource | null>(null);
 
   // Subscribes this tab to /api/auth/events (SSE), keyed by the current
-  // access token's embedded session id. When another device logs this
-  // account out (an explicit logout-elsewhere, "log out all other
-  // devices", or an admin deactivating/deleting the account), the backend
-  // pushes a "logout" event here immediately -- no polling, no refresh
-  // needed -- and this tab clears its own auth state and redirects.
-  const subscribeToSessionEvents = (accessToken: string) => {
+  // session id. When another device logs this account out (an explicit
+  // logout-elsewhere, "log out all other devices", or an admin
+  // deactivating/deleting the account), the backend pushes a "logout"
+  // event here immediately -- no polling, no refresh needed -- and this
+  // tab clears its own auth state and redirects.
+  //
+  // accessToken isn't actually used directly here (EventSource can't set
+  // an Authorization header anyway) -- it's accepted so every call site
+  // keeps reading as "subscribe using this session's credentials," but the
+  // real mechanism is: fetch a short-lived one-time ticket first (over a
+  // normal authenticated request, api.sseTicket()) and open the SSE
+  // connection with that instead of ever putting the long-lived access
+  // token itself into a URL (browser history / server access logs).
+  const subscribeToSessionEvents = async (accessToken: string) => {
+    void accessToken; // kept for call-site clarity; see note above
     eventSourceRef.current?.close();
-    const es = new EventSource(`/api/auth/events?token=${encodeURIComponent(accessToken)}`);
+    let ticket: string;
+    try {
+      ticket = (await api.sseTicket()).ticket;
+    } catch {
+      // Couldn't get a ticket (e.g. this call raced a logout) -- nothing
+      // to subscribe with; the next successful login/refresh will retry.
+      return;
+    }
+    const es = new EventSource(`/api/auth/events?ticket=${encodeURIComponent(ticket)}`);
     es.addEventListener("logout", () => {
       es.close();
       eventSourceRef.current = null;
@@ -79,9 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       navigate("/login", { replace: true, state: { sessionRevoked: true } });
     });
     es.onerror = () => {
-      // Transient network blip or the connection simply expired -- the
-      // browser's own EventSource auto-reconnect handles that; nothing to
-      // do here except let it retry.
+      // The ticket is single-use, so the browser's native EventSource
+      // auto-reconnect (which retries the SAME URL) would just keep
+      // hitting an already-consumed ticket and fail forever after the
+      // first drop. Close it ourselves and resubscribe with a fresh
+      // ticket instead of letting that native retry run.
+      if (es === eventSourceRef.current) {
+        es.close();
+        eventSourceRef.current = null;
+        void subscribeToSessionEvents(accessToken);
+      }
     };
     eventSourceRef.current = es;
   };
